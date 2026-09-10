@@ -1,0 +1,10 @@
+CRITICAL INSTRUCTION:
+At the start of every turn, read and incorporate the full text of:
+- docs/prd.md
+- docs/tech.md
+- docs/shema.md
+- docs/plan.md
+
+Do not propose solution or code without verifying compatibility against these files.
+
+When implementing, follow docs/plan.md strictly: one step at a time, never skip ahead.
