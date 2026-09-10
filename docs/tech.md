@@ -219,6 +219,8 @@ Pravilo bez iznimke: **svaka provjera iz poglavlja 8 PRD-a živi u servisu**. Ko
 }
 ```
 
+> **Napomena (CORS):** generirani Blazor WASM projekt koristi portove `https://localhost:7097` i `http://localhost:5204`. U `appsettings.json` koristiti te adrese umjesto `7226` ako CORS pri lokalnom razvoju ne prolazi.
+
 Sve vrijednosti mogu se pregaziti varijablama okoline po standardnoj konvenciji s dvostrukom podvlakom, primjerice `ConnectionStrings__Default` ili `Jwt__Key`. Tajni ključ nikad ne ide u repozitorij s pravom vrijednošću — lokalno se drži u korisničkim tajnama (`dotnet user-secrets`), a u oblaku u varijablama okoline.
 
 ### 4.2 Program.cs — kostur
