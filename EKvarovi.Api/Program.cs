@@ -1,9 +1,15 @@
+using EKvarovi.Api.Data;
 using EKvarovi.Api.Infrastructure.Options;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.SectionName));
 builder.Services.Configure<FileStorageOptions>(builder.Configuration.GetSection(FileStorageOptions.SectionName));
+
+builder.Services.AddDbContext<AppDbContext>(opt => opt
+    .UseNpgsql(builder.Configuration.GetConnectionString("Default"))
+    .UseSnakeCaseNamingConvention());
 
 // Add services to the container.
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
