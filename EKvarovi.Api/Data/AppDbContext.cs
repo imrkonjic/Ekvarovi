@@ -2,14 +2,19 @@ using System.Linq.Expressions;
 using EKvarovi.Api.Entities;
 using EKvarovi.Api.Entities.Common;
 using EKvarovi.Api.Entities.Lookups;
+using EKvarovi.Api.Services.Abstractions;
 using Microsoft.EntityFrameworkCore;
 
 namespace EKvarovi.Api.Data;
 
 public class AppDbContext : DbContext
 {
-    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)
+    private readonly ICurrentUserService _currentUser;
+
+    public AppDbContext(DbContextOptions<AppDbContext> options, ICurrentUserService currentUser)
+        : base(options)
     {
+        _currentUser = currentUser;
     }
 
     public DbSet<LocationType> LocationTypes => Set<LocationType>();
@@ -29,6 +34,34 @@ public class AppDbContext : DbContext
     public DbSet<InterventionMaterial> InterventionMaterials => Set<InterventionMaterial>();
     public DbSet<Attachment> Attachments => Set<Attachment>();
     public DbSet<FaultReportHistory> FaultReportHistories => Set<FaultReportHistory>();
+
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        var userId = _currentUser.UserIdOrNull;
+        var now = DateTime.UtcNow;
+
+        foreach (var entry in ChangeTracker.Entries<AuditableEntity>())
+        {
+            switch (entry.State)
+            {
+                case EntityState.Added:
+                    entry.Entity.CreatedAt = now;
+                    entry.Entity.CreatedByUserId = userId ?? 0;
+                    break;
+                case EntityState.Modified:
+                    entry.Entity.UpdatedAt = now;
+                    entry.Entity.UpdatedByUserId = userId;
+                    break;
+                case EntityState.Deleted:
+                    entry.State = EntityState.Modified;
+                    entry.Entity.IsDeleted = true;
+                    entry.Entity.DeletedAt = now;
+                    break;
+            }
+        }
+
+        return base.SaveChangesAsync(cancellationToken);
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
