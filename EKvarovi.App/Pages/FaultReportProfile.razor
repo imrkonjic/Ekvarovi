@@ -1,0 +1,466 @@
+@page "/fault-reports/{Id:int}"
+@using EKvarovi.Shared.Dtos.Assignments
+@using EKvarovi.Shared.Dtos.Attachments
+@using EKvarovi.Shared.Dtos.FaultReports
+@using EKvarovi.Shared.Dtos.Interventions
+@inject ApiClient Api
+@inject JwtAuthStateProvider AuthState
+@inject NavigationManager Navigation
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<PageTitle>@(_report?.ReportNumber ?? "Profil prijave")</PageTitle>
+
+@if (!string.IsNullOrEmpty(_error))
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" Dense="true">@_error</MudAlert>
+}
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Class="mb-4" />
+}
+else if (_report is not null)
+{
+    <MudStack Spacing="4">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+            <MudIconButton Icon="@Icons.Material.Filled.ArrowBack"
+                           Color="Color.Default"
+                           OnClick="GoBack"
+                           aria-label="Natrag" />
+            <MudText Typo="Typo.h4">@_report.ReportNumber</MudText>
+            <StatusBadge Name="@_report.StatusName" StatusId="@_report.FaultStatusId" />
+            @if (_report.IsOverdue)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Error">Kasni</MudChip>
+            }
+        </MudStack>
+
+        <MudText Typo="Typo.h5">@_report.Title</MudText>
+
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+            <PriorityBadge Name="@_report.PriorityName" Color="@_report.PriorityColor" />
+            @if (_report.FaultTypeName is not null)
+            {
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_report.FaultTypeName</MudChip>
+            }
+        </MudStack>
+
+        @if (HasAnyAction)
+        {
+            <MudPaper Class="pa-3" Elevation="1">
+                <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+                    @if (CanTriage)
+                    {
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.Category"
+                                   OnClick="OpenTriageDialogAsync">
+                            @(NeedsTriage ? "Kategoriziraj" : "Uredi kategorizaciju")
+                        </MudButton>
+                    }
+                    @if (CanAssign)
+                    {
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.PersonAdd"
+                                   OnClick="OpenAssignDialogAsync">
+                            Dodijeli
+                        </MudButton>
+                    }
+                    @if (CanReassign)
+                    {
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="Color.Info"
+                                   StartIcon="@Icons.Material.Filled.SwapHoriz"
+                                   OnClick="OpenReassignDialogAsync">
+                            Re-dodijeli
+                        </MudButton>
+                    }
+                    @if (CanClose)
+                    {
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="Color.Success"
+                                   StartIcon="@Icons.Material.Filled.CheckCircle"
+                                   OnClick="OpenCloseDialogAsync">
+                            Zatvori
+                        </MudButton>
+                    }
+                    @if (CanReopen)
+                    {
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="Color.Warning"
+                                   StartIcon="@Icons.Material.Filled.Undo"
+                                   OnClick="OpenReopenDialogAsync">
+                            Vrati u rad
+                        </MudButton>
+                    }
+                </MudStack>
+            </MudPaper>
+        }
+
+        <MudGrid Spacing="3">
+            <MudItem xs="12" md="6">
+                <MudPaper Class="pa-4" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-3">Osnovni podaci</MudText>
+                    <MudStack Spacing="2">
+                        <DetailRow Label="Lokacija" Value="@_report.LocationName" />
+                        <DetailRow Label="Opis" Value="@_report.Description" Multiline="true" />
+                        <DetailRow Label="Podnositelj" Value="@_report.ReportedByName" />
+                        <DetailRow Label="Prijavljeno" Value="@FormatDateTime(_report.ReportedAt)" />
+                    </MudStack>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" md="6">
+                <MudPaper Class="pa-4" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-3">Kategorizacija i rok</MudText>
+                    <MudStack Spacing="2">
+                        <DetailRow Label="Vrsta" Value="@(_report.FaultTypeName ?? "—")" />
+                        <DetailRow Label="Prioritet" Value="@(_report.PriorityName ?? "—")" />
+                        <DetailRow Label="Rok" Value="@FormatDueDate(_report.DueDate, _report.IsOverdue)" />
+                        <DetailRow Label="Pregledao" Value="@FormatUserAt(_report.ReviewedByName, _report.ReviewedAt)" />
+                        <DetailRow Label="Riješeno" Value="@FormatDateTime(_report.ResolvedAt)" />
+                    </MudStack>
+                </MudPaper>
+            </MudItem>
+
+            @if (_report.ClosedAt.HasValue || _report.TotalMaterialCost > 0)
+            {
+                <MudItem xs="12" md="6">
+                    <MudPaper Class="pa-4" Elevation="1">
+                        <MudText Typo="Typo.subtitle1" Class="mb-3">Zatvaranje i trošak</MudText>
+                        <MudStack Spacing="2">
+                            <DetailRow Label="Zatvorio" Value="@FormatUserAt(_report.ClosedByName, _report.ClosedAt)" />
+                            @if (!string.IsNullOrWhiteSpace(_report.ClosingNote))
+                            {
+                                <DetailRow Label="Napomena provjere" Value="@_report.ClosingNote" Multiline="true" />
+                            }
+                            <DetailRow Label="Ukupni trošak materijala" Value="@($"{_report.TotalMaterialCost:N2} €")" />
+                        </MudStack>
+                    </MudPaper>
+                </MudItem>
+            }
+        </MudGrid>
+
+        <MudPaper Class="pa-4" Elevation="1">
+            <MudText Typo="Typo.subtitle1" Class="mb-3">Radni nalozi</MudText>
+            @if (_assignments.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">Prijava još nema dodjela.</MudText>
+            }
+            else
+            {
+                <MudTable T="AssignmentListDto" Items="_assignments" Hover="true" Dense="true" Breakpoint="Breakpoint.Sm">
+                    <HeaderContent>
+                        <MudTh>Izvršitelj</MudTh>
+                        <MudTh>Dodijeljeno</MudTh>
+                        <MudTh>Status</MudTh>
+                        <MudTh>Deaktivirano</MudTh>
+                        <MudTh>Razlog re-dodjele</MudTh>
+                        <MudTh>Intervencije</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Izvršitelj">@context.TechnicianName</MudTd>
+                        <MudTd DataLabel="Dodijeljeno">@FormatDateTime(context.AssignedAt)</MudTd>
+                        <MudTd DataLabel="Status">
+                            @if (context.IsActive)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Success">Aktivan</MudChip>
+                            }
+                            else
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Default">Neaktivan</MudChip>
+                            }
+                        </MudTd>
+                        <MudTd DataLabel="Deaktivirano">@FormatDateTime(context.UnassignedAt)</MudTd>
+                        <MudTd DataLabel="Razlog re-dodjele">@(context.ReassignReason ?? "—")</MudTd>
+                        <MudTd DataLabel="Intervencije">@context.InterventionCount</MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+        </MudPaper>
+
+        <MudPaper Class="pa-4" Elevation="1">
+            <MudText Typo="Typo.subtitle1" Class="mb-3">Fotografije prije</MudText>
+            <AttachmentPanel Title="Fotografije prije"
+                             Items="_report.PhotosBefore"
+                             Purpose="AttachmentPurpose.PhotoBefore"
+                             UploadMode="AttachmentUploadMode.FaultReport"
+                             TargetId="Id"
+                             CanUpload="CanUploadAttachments"
+                             CanDeleteItem="CanDeleteAttachment"
+                             OnChanged="LoadAsync" />
+        </MudPaper>
+
+        <MudPaper Class="pa-4" Elevation="1">
+            <MudText Typo="Typo.subtitle1" Class="mb-3">Dokumenti</MudText>
+            <AttachmentPanel Title="Dokumenti"
+                             Items="_report.Documents"
+                             Purpose="AttachmentPurpose.Document"
+                             UploadMode="AttachmentUploadMode.FaultReport"
+                             TargetId="Id"
+                             CanUpload="CanUploadAttachments"
+                             CanDeleteItem="CanDeleteAttachment"
+                             OnChanged="LoadAsync" />
+        </MudPaper>
+
+        <MudPaper Class="pa-4" Elevation="1">
+            <MudText Typo="Typo.subtitle1" Class="mb-3">Intervencije</MudText>
+            @if (_interventions.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">Prijava još nema intervencija.</MudText>
+            }
+            else
+            {
+                <MudTable T="InterventionListDto" Items="_interventions" Hover="true" Dense="true" Breakpoint="Breakpoint.Sm">
+                    <HeaderContent>
+                        <MudTh>ID</MudTh>
+                        <MudTh>Izvršitelj</MudTh>
+                        <MudTh>Status</MudTh>
+                        <MudTh>Početak</MudTh>
+                        <MudTh>Završetak</MudTh>
+                        <MudTh>Bilješka</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="ID">
+                            <MudLink Href="@($"/interventions/{context.Id}")">#@context.Id</MudLink>
+                        </MudTd>
+                        <MudTd DataLabel="Izvršitelj">@context.TechnicianName</MudTd>
+                        <MudTd DataLabel="Status">
+                            <MudChip T="string"
+                                     Size="Size.Small"
+                                     Color="@InterventionChipColor(context.InterventionStatusId)">
+                                @context.StatusName
+                            </MudChip>
+                        </MudTd>
+                        <MudTd DataLabel="Početak">@FormatDateTime(context.StartedAt)</MudTd>
+                        <MudTd DataLabel="Završetak">@FormatDateTime(context.FinishedAt)</MudTd>
+                        <MudTd DataLabel="Bilješka">@(string.IsNullOrWhiteSpace(context.Note) ? "—" : context.Note)</MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+        </MudPaper>
+    </MudStack>
+}
+
+@code {
+    [Parameter]
+    public int Id { get; set; }
+
+    private FaultReportDetailDto? _report;
+    private readonly List<AssignmentListDto> _assignments = [];
+    private readonly List<InterventionListDto> _interventions = [];
+    private bool _loading = true;
+    private bool _isAdminOrManager;
+    private bool _isReporter;
+    private int _currentUserId;
+    private string? _error;
+
+    private bool CanUploadAttachments =>
+        _report is not null
+        && (_isAdminOrManager || (_isReporter && _report.ReportedByUserId == _currentUserId));
+
+    private bool IsClosed => _report?.FaultStatusId == FaultStatusIds.Zatvoreno;
+    private bool HasActiveAssignment => _assignments.Any(a => a.IsActive);
+    private AssignmentListDto? ActiveAssignment => _assignments.FirstOrDefault(a => a.IsActive);
+    private bool NeedsTriage => _report is { FaultTypeId: null } or { FaultPriorityId: null };
+    private bool CanTriage => _isAdminOrManager && !IsClosed;
+    private bool CanAssign => _isAdminOrManager && !IsClosed && !NeedsTriage && !HasActiveAssignment;
+    private bool CanReassign => _isAdminOrManager && !IsClosed && HasActiveAssignment;
+    private bool CanClose => _isAdminOrManager && _report?.FaultStatusId == FaultStatusIds.Rijeseno;
+    private bool CanReopen => _isAdminOrManager && _report?.FaultStatusId == FaultStatusIds.Rijeseno;
+    private bool HasAnyAction => CanTriage || CanAssign || CanReassign || CanClose || CanReopen;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        if (state.User.Identity?.IsAuthenticated != true)
+        {
+            Navigation.NavigateTo("/login");
+            return;
+        }
+
+        _isAdminOrManager = state.User.IsInRole(Roles.Admin) || state.User.IsInRole(Roles.Manager);
+        _isReporter = state.User.IsInRole(Roles.Reporter);
+        _ = int.TryParse(state.User.FindFirst("sub")?.Value, out _currentUserId);
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+
+        try
+        {
+            _report = await Api.GetFaultReportAsync(Id);
+
+            var assignments = await Api.GetFaultReportAssignmentsAsync(Id);
+            _assignments.Clear();
+            _assignments.AddRange(assignments);
+
+            var interventions = await Api.GetFaultReportInterventionsAsync(Id);
+            _interventions.Clear();
+            _interventions.AddRange(interventions);
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+            _report = null;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void GoBack() =>
+        Navigation.NavigateTo(_isAdminOrManager ? "/fault-reports" : "/my-reports");
+
+    private async Task OpenTriageDialogAsync()
+    {
+        if (_report is null)
+            return;
+
+        var parameters = new DialogParameters<TriageDialog>
+        {
+            { d => d.FaultReportId, Id },
+            { d => d.ReportNumber, _report.ReportNumber },
+            { d => d.InitialFaultTypeId, _report.FaultTypeId },
+            { d => d.InitialFaultPriorityId, _report.FaultPriorityId },
+            { d => d.InitialDueDate, _report.DueDate }
+        };
+
+        var dialog = await DialogService.ShowAsync<TriageDialog>(null, parameters, DialogOptions());
+        if (await DialogSucceededAsync(dialog))
+        {
+            Snackbar.Add("Kategorizacija spremljena.", Severity.Success);
+            await LoadAsync();
+        }
+    }
+
+    private async Task OpenAssignDialogAsync()
+    {
+        if (_report is null)
+            return;
+
+        var parameters = new DialogParameters<AssignDialog>
+        {
+            { d => d.FaultReportId, Id },
+            { d => d.ReportNumber, _report.ReportNumber }
+        };
+
+        var dialog = await DialogService.ShowAsync<AssignDialog>(null, parameters, DialogOptions());
+        if (await DialogSucceededAsync(dialog))
+        {
+            Snackbar.Add("Prijava dodijeljena.", Severity.Success);
+            await LoadAsync();
+        }
+    }
+
+    private async Task OpenReassignDialogAsync()
+    {
+        if (_report is null || ActiveAssignment is null)
+            return;
+
+        var parameters = new DialogParameters<ReassignDialog>
+        {
+            { d => d.AssignmentId, ActiveAssignment.Id },
+            { d => d.ReportNumber, _report.ReportNumber },
+            { d => d.CurrentTechnicianName, ActiveAssignment.TechnicianName }
+        };
+
+        var dialog = await DialogService.ShowAsync<ReassignDialog>(null, parameters, DialogOptions());
+        if (await DialogSucceededAsync(dialog))
+        {
+            Snackbar.Add("Prijava re-dodijeljena.", Severity.Success);
+            await LoadAsync();
+        }
+    }
+
+    private async Task OpenCloseDialogAsync()
+    {
+        if (_report is null)
+            return;
+
+        var parameters = new DialogParameters<CloseFaultReportDialog>
+        {
+            { d => d.FaultReportId, Id },
+            { d => d.ReportNumber, _report.ReportNumber }
+        };
+
+        var dialog = await DialogService.ShowAsync<CloseFaultReportDialog>(null, parameters, DialogOptions());
+        if (await DialogSucceededAsync(dialog))
+        {
+            Snackbar.Add("Prijava zatvorena.", Severity.Success);
+            await LoadAsync();
+        }
+    }
+
+    private async Task OpenReopenDialogAsync()
+    {
+        if (_report is null)
+            return;
+
+        var parameters = new DialogParameters<ReopenFaultReportDialog>
+        {
+            { d => d.FaultReportId, Id },
+            { d => d.ReportNumber, _report.ReportNumber }
+        };
+
+        var dialog = await DialogService.ShowAsync<ReopenFaultReportDialog>(null, parameters, DialogOptions());
+        if (await DialogSucceededAsync(dialog))
+        {
+            Snackbar.Add("Prijava vraćena u rad.", Severity.Success);
+            await LoadAsync();
+        }
+    }
+
+    private static DialogOptions DialogOptions() => new()
+    {
+        CloseButton = true,
+        MaxWidth = MaxWidth.Small,
+        FullWidth = true
+    };
+
+    private static async Task<bool> DialogSucceededAsync(IDialogReference dialog)
+    {
+        var result = await dialog.Result;
+        return result is not null && !result.Canceled;
+    }
+
+    private static string FormatDateTime(DateTime? value) =>
+        value.HasValue ? value.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm") : "—";
+
+    private static string FormatDueDate(DateTime? dueDate, bool isOverdue)
+    {
+        if (!dueDate.HasValue)
+            return "—";
+
+        var formatted = dueDate.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm");
+        return isOverdue ? $"{formatted} (kasni)" : formatted;
+    }
+
+    private static string FormatUserAt(string? name, DateTime? at)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return "—";
+
+        return at.HasValue
+            ? $"{name}, {at.Value.ToLocalTime():dd.MM.yyyy HH:mm}"
+            : name;
+    }
+
+    private bool CanDeleteAttachment(AttachmentDto item) =>
+        _isAdminOrManager || item.UploadedByUserId == _currentUserId;
+
+    private static Color InterventionChipColor(int statusId) => statusId switch
+    {
+        InterventionStatusIds.Planirana => Color.Default,
+        InterventionStatusIds.UTijeku => Color.Warning,
+        InterventionStatusIds.Zavrsena => Color.Success,
+        InterventionStatusIds.Neuspjesna => Color.Error,
+        _ => Color.Default
+    };
+}

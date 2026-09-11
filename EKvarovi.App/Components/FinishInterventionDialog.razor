@@ -1,0 +1,141 @@
+@using EKvarovi.Shared.Dtos.Interventions
+@inject ApiClient Api
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Završetak intervencije #@InterventionId</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3" Dense="true">@_error</MudAlert>
+        }
+        <MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
+            Odaberite ishod intervencije. Bilješka je obavezna (najmanje 10 znakova).
+        </MudText>
+        <MudRadioGroup @bind-Value="_isSuccessful" Class="mb-3">
+            <MudRadio Value="true" Color="Color.Success">Uspješna</MudRadio>
+            <MudRadio Value="false" Color="Color.Error">Neuspješna</MudRadio>
+        </MudRadioGroup>
+        <MudDatePicker @bind-Date="_finishedDate"
+                       Label="Datum završetka"
+                       Class="mb-3" />
+        <MudTimePicker @bind-Time="_finishedTime"
+                       Label="Vrijeme završetka"
+                       Class="mb-3" />
+        <MudTextField @bind-Value="_note"
+                      Label="Bilješka"
+                      Required="true"
+                      Lines="4"
+                      Counter="2000"
+                      MaxLength="2000"
+                      Immediate="true"
+                      Validation="@(new Func<string, IEnumerable<string>>(ValidateNote))"
+                      Class="mb-3" />
+        @if (!_isSuccessful)
+        {
+            <MudTextField @bind-Value="_failureReason"
+                          Label="Razlog neuspjeha"
+                          Required="true"
+                          Lines="3"
+                          Counter="500"
+                          MaxLength="500"
+                          Immediate="true"
+                          Validation="@(new Func<string, IEnumerable<string>>(ValidateFailureReason))" />
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Odustani</MudButton>
+        <MudButton Color="@(_isSuccessful ? Color.Success : Color.Error)"
+                   Variant="Variant.Filled"
+                   Disabled="_busy || !CanSubmit"
+                   OnClick="SubmitAsync">
+            @if (_busy)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Završi intervenciju
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter]
+    public int InterventionId { get; set; }
+
+    [Parameter]
+    public string? InitialNote { get; set; }
+
+    private bool _isSuccessful = true;
+    private DateTime? _finishedDate = DateTime.Today;
+    private TimeSpan? _finishedTime = DateTime.Now.TimeOfDay;
+    private string _note = string.Empty;
+    private string _failureReason = string.Empty;
+    private bool _busy;
+    private string? _error;
+
+    protected override void OnInitialized()
+    {
+        _note = InitialNote ?? string.Empty;
+    }
+
+    private bool CanSubmit =>
+        !string.IsNullOrWhiteSpace(_note)
+        && _note.Trim().Length >= 10
+        && (_isSuccessful || !string.IsNullOrWhiteSpace(_failureReason));
+
+    private static IEnumerable<string> ValidateNote(string note)
+    {
+        var trimmed = note?.Trim() ?? string.Empty;
+        if (trimmed.Length == 0)
+            yield return "Bilješka je obavezna.";
+        else if (trimmed.Length < 10)
+            yield return "Bilješka mora imati najmanje 10 znakova.";
+    }
+
+    private static IEnumerable<string> ValidateFailureReason(string reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+            yield return "Razlog neuspjeha je obavezan.";
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (!CanSubmit)
+            return;
+
+        _busy = true;
+        _error = null;
+
+        try
+        {
+            DateTime? finishedAt = null;
+            if (_finishedDate.HasValue && _finishedTime.HasValue)
+            {
+                finishedAt = _finishedDate.Value.Date.Add(_finishedTime.Value);
+            }
+
+            await Api.FinishInterventionAsync(InterventionId, new InterventionFinishDto
+            {
+                IsSuccessful = _isSuccessful,
+                FinishedAt = finishedAt,
+                Note = _note.Trim(),
+                FailureReason = _isSuccessful ? null : _failureReason.Trim()
+            });
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Close(DialogResult.Cancel());
+}

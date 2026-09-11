@@ -1,5 +1,6 @@
 using EKvarovi.Api.Services.Abstractions;
 using EKvarovi.Shared.Common;
+using EKvarovi.Shared.Dtos.Assignments;
 using EKvarovi.Shared.Dtos.Users;
 using EKvarovi.Shared.Enums;
 using Microsoft.AspNetCore.Authorization;
@@ -10,7 +11,9 @@ namespace EKvarovi.Api.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize(Roles = Roles.Admin)]
-public class UsersController(IUserService userService) : ControllerBase
+public class UsersController(
+    IUserService userService,
+    IWorkAssignmentService workAssignmentService) : ControllerBase
 {
     [HttpGet]
     public Task<PagedResult<UserListDto>> Search([FromQuery] UserFilterDto filter, CancellationToken ct)
@@ -44,4 +47,16 @@ public class UsersController(IUserService userService) : ControllerBase
         await userService.ActivateAsync(id, ct);
         return NoContent();
     }
+
+    [HttpPut("{id:int}/deactivate")]
+    public async Task<IActionResult> Deactivate(int id, CancellationToken ct)
+    {
+        await userService.DeactivateAsync(id, ct);
+        return NoContent();
+    }
+
+    [HttpPost("{id:int}/transfer-assignments")]
+    public Task<TransferResultDto> TransferAssignments(
+        int id, [FromBody] TransferAssignmentsDto dto, CancellationToken ct)
+        => workAssignmentService.TransferAssignmentsAsync(id, dto, ct);
 }

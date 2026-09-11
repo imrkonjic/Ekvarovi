@@ -1,0 +1,21 @@
+<MudPaper Class="pa-4 mb-4" Elevation="1">
+    <MudStack Row="true" AlignItems="AlignItems.End" Justify="Justify.SpaceBetween" Spacing="2">
+        <MudStack Row="true" Wrap="Wrap.Wrap" AlignItems="AlignItems.End" Spacing="2" Class="flex-grow-1">
+            @ChildContent
+        </MudStack>
+        <MudButton Variant="Variant.Outlined"
+                   Color="Color.Secondary"
+                   StartIcon="@Icons.Material.Filled.FilterAltOff"
+                   OnClick="OnReset">
+            Resetiraj filtere
+        </MudButton>
+    </MudStack>
+</MudPaper>
+
+@code {
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    [Parameter]
+    public EventCallback OnReset { get; set; }
+}

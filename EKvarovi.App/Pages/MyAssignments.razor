@@ -1,0 +1,204 @@
+@page "/my-assignments"
+@using EKvarovi.Shared.Common
+@using EKvarovi.Shared.Dtos.Assignments
+@using EKvarovi.Shared.Dtos.Interventions
+@using EKvarovi.Shared.Enums
+@inject ApiClient Api
+@inject JwtAuthStateProvider AuthState
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+
+<PageTitle>Moji nalozi</PageTitle>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-4">
+    <MudText Typo="Typo.h4">Moji nalozi</MudText>
+    <MudSwitch @bind-Value="_onlyActive"
+               @bind-Value:after="LoadAsync"
+               Color="Color.Primary"
+               Label="Samo aktivni" />
+</MudStack>
+
+@if (!string.IsNullOrEmpty(_error))
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" Dense="true">@_error</MudAlert>
+}
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Class="mb-4" />
+}
+
+@if (!_loading && _assignments.Count == 0)
+{
+    <MudText Typo="Typo.body2" Class="mud-text-secondary">Nemate radnih naloga.</MudText>
+}
+else
+{
+    <MudGrid Spacing="3">
+        @foreach (var assignment in _assignments)
+        {
+            <MudItem xs="12" sm="6" lg="4">
+                <MudCard Elevation="2" Class="h-100">
+                    <MudCardHeader>
+                        <CardHeaderContent>
+                            <MudText Typo="Typo.h6">@assignment.ReportNumber</MudText>
+                            <MudText Typo="Typo.body2" Class="mud-text-secondary">@assignment.Title</MudText>
+                        </CardHeaderContent>
+                        <CardHeaderActions>
+                            @if (assignment.IsActive)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Success">Aktivan</MudChip>
+                            }
+                            else
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Default">Neaktivan</MudChip>
+                            }
+                        </CardHeaderActions>
+                    </MudCardHeader>
+                    <MudCardContent>
+                        <MudStack Spacing="1">
+                            <MudText Typo="Typo.body2"><b>Lokacija:</b> @assignment.LocationName</MudText>
+                            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                                <PriorityBadge Name="@assignment.PriorityName" Color="@assignment.PriorityColor" />
+                                <StatusBadge Name="@assignment.StatusName" />
+                            </MudStack>
+                            <MudText Typo="Typo.body2">
+                                <b>Dodijeljeno:</b> @assignment.AssignedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm")
+                            </MudText>
+                            <MudText Typo="Typo.body2">
+                                <b>Rok:</b>
+                                @if (assignment.DueDate.HasValue)
+                                {
+                                    <span class="@(assignment.IsOverdue ? "text-danger fw-bold" : "")">
+                                        @assignment.DueDate.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm")
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span>—</span>
+                                }
+                            </MudText>
+                            <MudText Typo="Typo.body2"><b>Intervencije:</b> @assignment.InterventionCount</MudText>
+                        </MudStack>
+                    </MudCardContent>
+                    <MudCardActions>
+                        @if (CanStartIntervention(assignment))
+                        {
+                            <MudButton Variant="Variant.Filled"
+                                       Color="Color.Primary"
+                                       StartIcon="@Icons.Material.Filled.PlayArrow"
+                                       Disabled="_startingId == assignment.Id"
+                                       OnClick="() => StartInterventionAsync(assignment)">
+                                @if (_startingId == assignment.Id)
+                                {
+                                    <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                                }
+                                Pokreni intervenciju
+                            </MudButton>
+                        }
+                    </MudCardActions>
+                </MudCard>
+            </MudItem>
+        }
+    </MudGrid>
+
+    @if (_totalPages > 1)
+    {
+        <MudPagination Class="mt-4"
+                       Count="_totalPages"
+                       Selected="_filter.Page"
+                       SelectedChanged="OnPageChangedAsync"
+                       BoundaryCount="1"
+                       MiddleCount="2" />
+    }
+}
+
+@code {
+    private readonly AssignmentFilterDto _filter = new() { PageSize = 12 };
+    private readonly List<AssignmentListDto> _assignments = [];
+    private bool _onlyActive = true;
+    private bool _loading;
+    private int? _startingId;
+    private string? _error;
+    private int _totalPages = 1;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        if (state.User.Identity?.IsAuthenticated != true)
+        {
+            Navigation.NavigateTo("/login");
+            return;
+        }
+
+        if (!state.User.IsInRole(Roles.Technician))
+        {
+            _error = "Ova stranica je dostupna samo izvršiteljima.";
+            return;
+        }
+
+        await LoadAsync();
+    }
+
+    private static bool CanStartIntervention(AssignmentListDto assignment) =>
+        assignment.IsActive
+        && assignment.StatusName is not ("Riješeno" or "Zatvoreno");
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+
+        try
+        {
+            _filter.OnlyActive = _onlyActive;
+            var result = await Api.GetMyAssignmentsAsync(_filter);
+            _assignments.Clear();
+            _assignments.AddRange(result.Items);
+            _totalPages = Math.Max(result.TotalPages, 1);
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+            _assignments.Clear();
+            _totalPages = 1;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task OnPageChangedAsync(int page)
+    {
+        _filter.Page = page;
+        await LoadAsync();
+    }
+
+    private async Task StartInterventionAsync(AssignmentListDto assignment)
+    {
+        _startingId = assignment.Id;
+        _error = null;
+
+        try
+        {
+            var intervention = await Api.CreateInterventionAsync(new InterventionCreateDto
+            {
+                WorkAssignmentId = assignment.Id
+            });
+
+            Snackbar.Add(
+                $"Intervencija #{intervention.Id} pokrenuta za prijavu {intervention.ReportNumber}.",
+                Severity.Success);
+            await LoadAsync();
+        }
+        catch (ApiClientException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _startingId = null;
+        }
+    }
+}

@@ -1,0 +1,242 @@
+@page "/interventions"
+@using EKvarovi.Shared.Common
+@using EKvarovi.Shared.Dtos.Interventions
+@using EKvarovi.Shared.Enums
+@inject ApiClient Api
+@inject LookupCache Lookups
+@inject JwtAuthStateProvider AuthState
+@inject NavigationManager Navigation
+
+<PageTitle>@_pageTitle</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-4">@_pageTitle</MudText>
+
+@if (!string.IsNullOrEmpty(_error))
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" Dense="true">@_error</MudAlert>
+}
+
+<FilterBar OnReset="ResetFiltersAsync">
+    <MudTextField @bind-Value="_filter.Search"
+                  Label="Pretraga"
+                  Placeholder="Broj prijave ili bilješka…"
+                  Adornment="Adornment.Start"
+                  AdornmentIcon="@Icons.Material.Filled.Search"
+                  Immediate="true"
+                  Style="min-width: 220px;" />
+    <MudSelect T="int?" @bind-Value="_filter.InterventionStatusId" Label="Status" Clearable="true" Style="min-width: 160px;">
+        @foreach (var status in Lookups.InterventionStatuses)
+        {
+            <MudSelectItem T="int?" Value="@status.Id">@status.Name</MudSelectItem>
+        }
+    </MudSelect>
+    @if (_isAdminOrManager)
+    {
+        <MudSelect T="int?" @bind-Value="_filter.TechnicianUserId" Label="Izvršitelj" Clearable="true" Style="min-width: 200px;">
+            @foreach (var tech in _technicians)
+            {
+                <MudSelectItem T="int?" Value="@tech.Id">@tech.Name</MudSelectItem>
+            }
+        </MudSelect>
+    }
+    <MudDatePicker @bind-Date="_startedFrom" Label="Početak od" Clearable="true" Style="min-width: 170px;" />
+    <MudDatePicker @bind-Date="_startedTo" Label="Početak do" Clearable="true" Style="min-width: 170px;" />
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ApplyFiltersAsync">
+        Primijeni
+    </MudButton>
+</FilterBar>
+
+<MudTable T="InterventionListDto"
+          @ref="_table"
+          ServerData="LoadAsync"
+          Hover="true"
+          Dense="true"
+          Loading="_loading">
+    <HeaderContent>
+        <MudTh>ID</MudTh>
+        <MudTh><MudTableSortLabel T="InterventionListDto" SortLabel="reportNumber" InitialDirection="SortDirection.Descending">Broj prijave</MudTableSortLabel></MudTh>
+        <MudTh>Naslov</MudTh>
+        <MudTh><MudTableSortLabel T="InterventionListDto" SortLabel="location">Lokacija</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel T="InterventionListDto" SortLabel="priority">Prioritet</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel T="InterventionListDto" SortLabel="technician">Izvršitelj</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel T="InterventionListDto" SortLabel="status">Status</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel T="InterventionListDto" SortLabel="startedAt" InitialDirection="SortDirection.Descending">Početak</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel T="InterventionListDto" SortLabel="finishedAt">Završetak</MudTableSortLabel></MudTh>
+        <MudTh>Bilješka</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="ID">
+            <MudLink Href="@($"/interventions/{context.Id}")">#@context.Id</MudLink>
+        </MudTd>
+        <MudTd DataLabel="Broj prijave">
+            <MudLink Href="@($"/fault-reports/{context.FaultReportId}")">@context.ReportNumber</MudLink>
+        </MudTd>
+        <MudTd DataLabel="Naslov">@context.Title</MudTd>
+        <MudTd DataLabel="Lokacija">@context.LocationName</MudTd>
+        <MudTd DataLabel="Prioritet">
+            <PriorityBadge Name="@context.PriorityName" Color="@context.PriorityColor" />
+        </MudTd>
+        <MudTd DataLabel="Izvršitelj">@context.TechnicianName</MudTd>
+        <MudTd DataLabel="Status">
+            <MudChip T="string"
+                     Size="Size.Small"
+                     Color="@InterventionChipColor(context.InterventionStatusId)">
+                @context.StatusName
+            </MudChip>
+        </MudTd>
+        <MudTd DataLabel="Početak">@FormatDateTime(context.StartedAt)</MudTd>
+        <MudTd DataLabel="Završetak">@FormatDateTime(context.FinishedAt)</MudTd>
+        <MudTd DataLabel="Bilješka">@TruncateNote(context.Note)</MudTd>
+    </RowTemplate>
+    <NoRecordsContent>
+        <MudText Typo="Typo.body2" Class="pa-4 mud-text-secondary">Nema intervencija za odabrane filtere.</MudText>
+    </NoRecordsContent>
+    <PagerContent>
+        <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+    </PagerContent>
+</MudTable>
+
+@code {
+    private MudTable<InterventionListDto>? _table;
+    private InterventionFilterDto _filter = new();
+    private readonly List<LookupDto> _technicians = [];
+    private DateTime? _startedFrom;
+    private DateTime? _startedTo;
+    private bool _loading;
+    private bool _isAdminOrManager;
+    private bool _canAccess;
+    private string _pageTitle = "Intervencije";
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        if (state.User.Identity?.IsAuthenticated != true)
+        {
+            Navigation.NavigateTo("/login");
+            return;
+        }
+
+        _isAdminOrManager = state.User.IsInRole(Roles.Admin) || state.User.IsInRole(Roles.Manager);
+        _canAccess = _isAdminOrManager || state.User.IsInRole(Roles.Technician);
+
+        if (!_canAccess)
+        {
+            _error = "Ova stranica je dostupna samo administratorima, upraviteljima i izvršiteljima.";
+            return;
+        }
+
+        _pageTitle = _isAdminOrManager ? "Intervencije" : "Moje intervencije";
+
+        await Lookups.EnsureLoadedAsync();
+
+        if (_isAdminOrManager)
+        {
+            try
+            {
+                _technicians.AddRange(await Api.GetTechniciansAsync());
+            }
+            catch (ApiClientException ex)
+            {
+                _error = ex.Message;
+            }
+        }
+    }
+
+    private async Task<TableData<InterventionListDto>> LoadAsync(TableState state, CancellationToken ct)
+    {
+        if (!_canAccess)
+        {
+            return new TableData<InterventionListDto> { Items = [], TotalItems = 0 };
+        }
+
+        _loading = true;
+        _error = null;
+
+        try
+        {
+            SyncDateFilters();
+
+            _filter.Page = state.Page + 1;
+            _filter.PageSize = state.PageSize;
+
+            if (string.IsNullOrWhiteSpace(state.SortLabel))
+            {
+                _filter.SortBy = "startedAt";
+                _filter.SortDir = "desc";
+            }
+            else
+            {
+                _filter.SortBy = state.SortLabel;
+                _filter.SortDir = state.SortDirection == SortDirection.Ascending ? "asc" : "desc";
+            }
+
+            var result = _isAdminOrManager
+                ? await Api.GetInterventionsAsync(_filter, ct)
+                : await Api.GetMyInterventionsAsync(_filter, ct);
+
+            return new TableData<InterventionListDto>
+            {
+                Items = result.Items,
+                TotalItems = result.TotalCount
+            };
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+            return new TableData<InterventionListDto>
+            {
+                Items = [],
+                TotalItems = 0
+            };
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void SyncDateFilters()
+    {
+        _filter.StartedFrom = _startedFrom?.Date;
+        _filter.StartedTo = _startedTo?.Date.AddDays(1).AddTicks(-1);
+    }
+
+    private async Task ApplyFiltersAsync()
+    {
+        _filter.Page = 1;
+        if (_table is not null)
+            await _table.ReloadServerData();
+    }
+
+    private async Task ResetFiltersAsync()
+    {
+        _filter = new InterventionFilterDto();
+        _startedFrom = null;
+        _startedTo = null;
+
+        if (_table is not null)
+            await _table.ReloadServerData();
+    }
+
+    private static string FormatDateTime(DateTime? value) =>
+        value.HasValue ? value.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm") : "—";
+
+    private static string TruncateNote(string? note)
+    {
+        if (string.IsNullOrWhiteSpace(note))
+            return "—";
+
+        var trimmed = note.Trim();
+        return trimmed.Length <= 80 ? trimmed : trimmed[..77] + "…";
+    }
+
+    private static Color InterventionChipColor(int statusId) => statusId switch
+    {
+        InterventionStatusIds.Planirana => Color.Default,
+        InterventionStatusIds.UTijeku => Color.Warning,
+        InterventionStatusIds.Zavrsena => Color.Success,
+        InterventionStatusIds.Neuspjesna => Color.Error,
+        _ => Color.Default
+    };
+}

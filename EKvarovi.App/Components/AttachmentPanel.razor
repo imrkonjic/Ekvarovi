@@ -1,0 +1,289 @@
+@using EKvarovi.Shared.Dtos.Attachments
+@using EKvarovi.Shared.Enums
+@inject ApiClient Api
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@inject IAttachmentMediaService AttachmentMedia
+
+<MudStack Spacing="2">
+    @if (IsImagePurpose)
+    {
+        @if (Items.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">Nema privitaka.</MudText>
+        }
+        else
+        {
+            <AttachmentGallery Items="Items"
+                               CanDeleteItem="CanDeleteItem"
+                               OnDelete="ConfirmDeleteAsync" />
+        }
+    }
+    else if (Items.Count == 0)
+    {
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">Nema privitaka.</MudText>
+    }
+    else
+    {
+        <MudList T="AttachmentDto" Dense="true">
+            @foreach (var item in Items)
+            {
+                <MudListItem T="AttachmentDto">
+                    <div class="d-flex align-center justify-space-between flex-wrap gap-2" style="width: 100%;">
+                        <MudStack Spacing="0">
+                            <MudText Typo="Typo.body2">@item.OriginalFileName</MudText>
+                            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                @FormatSize(item.SizeBytes) · @item.UploadedByUserName · @FormatDate(item.UploadedAt)
+                            </MudText>
+                        </MudStack>
+                        <MudStack Row="true" Spacing="1">
+                            <MudIconButton Icon="@Icons.Material.Filled.Download"
+                                           Size="Size.Small"
+                                           aria-label="Preuzmi"
+                                           Disabled="_downloadingId == item.Id"
+                                           OnClick="@(() => DownloadAsync(item))" />
+                            @if (CanDeleteItem?.Invoke(item) == true)
+                            {
+                                <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                                               Size="Size.Small"
+                                               Color="Color.Error"
+                                               aria-label="Obriši"
+                                               Disabled="_deletingId == item.Id"
+                                               OnClick="@(() => ConfirmDeleteAsync(item.Id))" />
+                            }
+                        </MudStack>
+                    </div>
+                </MudListItem>
+            }
+        </MudList>
+    }
+
+    @if (CanUpload && UploadMode != AttachmentUploadMode.None)
+    {
+        <div class="mt-2">
+            @if (Items.Count >= MaxAttachments)
+            {
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                    Dosegnut je maksimalan broj privitaka (@MaxAttachments).
+                </MudText>
+            }
+            else
+            {
+                <InputFile id="@_inputId"
+                           OnChange="OnFilesSelectedAsync"
+                           accept="@AcceptTypes"
+                           capture="@CaptureAttribute"
+                           multiple
+                           disabled="@_uploading"
+                           class="d-none" />
+                <MudButton Variant="Variant.Outlined"
+                           Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Upload"
+                           Disabled="_uploading"
+                           HtmlTag="label"
+                           for="@_inputId">
+                    @if (_uploading)
+                    {
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                    }
+                    @UploadButtonText
+                </MudButton>
+                <MudText Typo="Typo.caption" Class="mud-text-secondary mt-1">
+                    @HelpText
+                </MudText>
+            }
+        </div>
+    }
+</MudStack>
+
+@code {
+    private const int MaxAttachments = 5;
+    private const long MaxImageBytes = 5L * 1024 * 1024;
+    private const long MaxDocumentBytes = 10L * 1024 * 1024;
+
+    private readonly string _inputId = $"attachment-upload-{Guid.NewGuid():N}";
+
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = string.Empty;
+
+    [Parameter]
+    public IReadOnlyList<AttachmentDto> Items { get; set; } = [];
+
+    [Parameter, EditorRequired]
+    public AttachmentPurpose Purpose { get; set; }
+
+    [Parameter]
+    public AttachmentUploadMode UploadMode { get; set; } = AttachmentUploadMode.None;
+
+    [Parameter]
+    public int TargetId { get; set; }
+
+    [Parameter]
+    public bool CanUpload { get; set; }
+
+    [Parameter]
+    public Func<AttachmentDto, bool>? CanDeleteItem { get; set; }
+
+    [Parameter]
+    public EventCallback OnChanged { get; set; }
+
+    [Parameter]
+    public bool EnableCameraCapture { get; set; }
+
+    private bool _uploading;
+    private int? _deletingId;
+    private int? _downloadingId;
+
+    private bool IsImagePurpose =>
+        Purpose is AttachmentPurpose.PhotoBefore or AttachmentPurpose.PhotoAfter;
+
+    private string AcceptTypes => IsImagePurpose
+        ? "image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+        : "application/pdf,.pdf";
+
+    private string? CaptureAttribute =>
+        EnableCameraCapture && IsImagePurpose ? "environment" : null;
+
+    private string UploadButtonText => IsImagePurpose ? "Dodaj fotografiju" : "Dodaj dokument";
+
+    private string HelpText => IsImagePurpose
+        ? "Dopuštene slike: JPG, PNG, WEBP do 5 MB."
+        : "Dopušteni dokumenti: PDF do 10 MB.";
+
+    private async Task OnFilesSelectedAsync(InputFileChangeEventArgs e)
+    {
+        if (_uploading || UploadMode == AttachmentUploadMode.None || TargetId <= 0)
+            return;
+
+        var remaining = MaxAttachments - Items.Count;
+        if (remaining <= 0)
+        {
+            Snackbar.Add("Dosegnut je maksimalan broj privitaka (5).", Severity.Warning);
+            return;
+        }
+
+        var files = e.GetMultipleFiles(remaining).ToList();
+        if (files.Count == 0)
+            return;
+
+        _uploading = true;
+
+        try
+        {
+            var uploadedThisBatch = 0;
+
+            foreach (var file in files)
+            {
+                if (Items.Count + uploadedThisBatch >= MaxAttachments)
+                {
+                    Snackbar.Add("Dosegnut je maksimalan broj privitaka (5).", Severity.Warning);
+                    break;
+                }
+
+                var maxSize = IsImagePurpose ? MaxImageBytes : MaxDocumentBytes;
+                await using var stream = file.OpenReadStream(maxSize);
+                await UploadFileAsync(stream, file.Name, file.ContentType);
+                uploadedThisBatch++;
+            }
+
+            if (uploadedThisBatch > 0)
+                await OnChanged.InvokeAsync();
+        }
+        catch (ApiClientException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _uploading = false;
+        }
+    }
+
+    private async Task UploadFileAsync(Stream stream, string fileName, string contentType)
+    {
+        if (UploadMode == AttachmentUploadMode.FaultReport)
+        {
+            await Api.UploadFaultReportAttachmentAsync(
+                TargetId, Purpose, stream, fileName, contentType);
+            Snackbar.Add("Privitak učitan.", Severity.Success);
+            return;
+        }
+
+        if (UploadMode == AttachmentUploadMode.Intervention)
+        {
+            await Api.UploadInterventionAttachmentAsync(
+                TargetId, stream, fileName, contentType);
+            Snackbar.Add("Privitak učitan.", Severity.Success);
+        }
+    }
+
+    private async Task ConfirmDeleteAsync(int attachmentId)
+    {
+        var item = Items.FirstOrDefault(i => i.Id == attachmentId);
+        var fileName = item?.OriginalFileName ?? "privitak";
+
+        var parameters = new DialogParameters<ConfirmDialog>
+        {
+            { d => d.Title, "Brisanje privitka" },
+            { d => d.Message, $"Obrisati privitak \"{fileName}\"?" },
+            { d => d.ConfirmText, "Obriši" },
+            { d => d.ConfirmColor, Color.Error }
+        };
+
+        var dialog = await DialogService.ShowAsync<ConfirmDialog>(null, parameters, new DialogOptions
+        {
+            CloseButton = true,
+            MaxWidth = MaxWidth.Small,
+            FullWidth = true
+        });
+
+        var result = await dialog.Result;
+        if (result is null || result.Canceled)
+            return;
+
+        _deletingId = attachmentId;
+
+        try
+        {
+            await Api.DeleteAttachmentAsync(attachmentId);
+            Snackbar.Add("Privitak obrisan.", Severity.Success);
+            await OnChanged.InvokeAsync();
+        }
+        catch (ApiClientException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _deletingId = null;
+        }
+    }
+
+    private async Task DownloadAsync(AttachmentDto item)
+    {
+        _downloadingId = item.Id;
+
+        try
+        {
+            await AttachmentMedia.DownloadAsync(item.DownloadUrl, item.OriginalFileName);
+        }
+        finally
+        {
+            _downloadingId = null;
+        }
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        if (bytes < 1024)
+            return $"{bytes} B";
+
+        if (bytes < 1024 * 1024)
+            return $"{bytes / 1024.0:0.#} KB";
+
+        return $"{bytes / (1024.0 * 1024.0):0.#} MB";
+    }
+
+    private static string FormatDate(DateTime value) =>
+        value.ToLocalTime().ToString("dd.MM.yyyy HH:mm");
+}

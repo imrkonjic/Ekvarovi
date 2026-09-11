@@ -1,0 +1,29 @@
+<MudChip T="string"
+         Size="Size.Small"
+         Color="@ChipColor"
+         Variant="@ChipVariant"
+         Class="status-badge">
+    @Name
+</MudChip>
+
+@code {
+    [Parameter]
+    public string Name { get; set; } = string.Empty;
+
+    [Parameter]
+    public int? StatusId { get; set; }
+
+    private Color ChipColor => StatusId switch
+    {
+        FaultStatusIds.Zaprimljeno => Color.Default,
+        FaultStatusIds.Pregledano => Color.Info,
+        FaultStatusIds.Dodijeljeno => Color.Primary,
+        FaultStatusIds.URadu => Color.Warning,
+        FaultStatusIds.Rijeseno => Color.Success,
+        FaultStatusIds.Zatvoreno => Color.Secondary,
+        _ => Color.Default
+    };
+
+    private Variant ChipVariant =>
+        StatusId.HasValue ? Variant.Filled : Variant.Outlined;
+}

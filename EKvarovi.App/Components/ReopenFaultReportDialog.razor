@@ -1,0 +1,87 @@
+@using EKvarovi.Shared.Dtos.FaultReports
+@inject ApiClient Api
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Vraćanje prijave u rad @ReportNumber</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3" Dense="true">@_error</MudAlert>
+        }
+        <MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
+            Prijava će se vratiti u status U radu. Obrazloženje je obavezno.
+        </MudText>
+        <MudTextField @bind-Value="_reason"
+                      Label="Obrazloženje"
+                      Required="true"
+                      Lines="4"
+                      Counter="1000"
+                      MaxLength="1000"
+                      Immediate="true"
+                      Validation="@(new Func<string, IEnumerable<string>>(ValidateReason))" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Odustani</MudButton>
+        <MudButton Color="Color.Warning"
+                   Variant="Variant.Filled"
+                   Disabled="_busy || string.IsNullOrWhiteSpace(_reason)"
+                   OnClick="SubmitAsync">
+            @if (_busy)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Vrati u rad
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter]
+    public int FaultReportId { get; set; }
+
+    [Parameter]
+    public string ReportNumber { get; set; } = string.Empty;
+
+    private string _reason = string.Empty;
+    private bool _busy;
+    private string? _error;
+
+    private static IEnumerable<string> ValidateReason(string reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+            yield return "Obrazloženje je obavezno.";
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_reason))
+            return;
+
+        _busy = true;
+        _error = null;
+
+        try
+        {
+            await Api.ReopenFaultReportAsync(FaultReportId, new ReopenFaultReportDto
+            {
+                Reason = _reason.Trim()
+            });
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Close(DialogResult.Cancel());
+}

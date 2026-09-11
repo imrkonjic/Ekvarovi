@@ -4,7 +4,9 @@ using EKvarovi.Api.Entities;
 using EKvarovi.Api.Infrastructure;
 using EKvarovi.Api.Services.Abstractions;
 using EKvarovi.Shared.Common;
+using EKvarovi.Shared.Dtos.Assignments;
 using EKvarovi.Shared.Dtos.Users;
+using EKvarovi.Shared.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace EKvarovi.Api.Services;
@@ -12,6 +14,7 @@ namespace EKvarovi.Api.Services;
 public sealed class UserService(AppDbContext db) : IUserService
 {
     private const int BcryptWorkFactor = 11;
+    private const int MinPasswordLength = 8;
     private const string NotFoundMessage = "Korisnik nije pronađen.";
     private const string DuplicateEmailMessage = "Korisnik s tim e-mailom već postoji.";
 
@@ -30,13 +33,13 @@ public sealed class UserService(AppDbContext db) : IUserService
 
         if (!string.IsNullOrWhiteSpace(filter.Search))
         {
-            var term = filter.Search.Trim();
+            var term = $"%{filter.Search.Trim()}%";
             query = query.Where(u =>
-                u.FirstName.Contains(term) ||
-                u.LastName.Contains(term) ||
-                u.Email.Contains(term) ||
-                (u.Phone != null && u.Phone.Contains(term)) ||
-                (u.Specialization != null && u.Specialization.Contains(term)));
+                EF.Functions.ILike(u.FirstName, term) ||
+                EF.Functions.ILike(u.LastName, term) ||
+                EF.Functions.ILike(u.Email, term) ||
+                (u.Phone != null && EF.Functions.ILike(u.Phone, term)) ||
+                (u.Specialization != null && EF.Functions.ILike(u.Specialization, term)));
         }
 
         if (filter.RoleId is int roleId)
@@ -114,6 +117,9 @@ public sealed class UserService(AppDbContext db) : IUserService
         if (string.IsNullOrWhiteSpace(dto.NewPassword))
             throw AppException.Validation("Nova lozinka je obavezna.");
 
+        if (dto.NewPassword.Trim().Length < MinPasswordLength)
+            throw AppException.Validation("Lozinka mora imati najmanje 8 znakova.");
+
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id, ct)
             ?? throw AppException.NotFound(NotFoundMessage);
 
@@ -128,6 +134,34 @@ public sealed class UserService(AppDbContext db) : IUserService
 
         user.IsActive = true;
         user.DeactivatedAt = null;
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task DeactivateAsync(int userId, CancellationToken ct = default)
+    {
+        var active = await db.WorkAssignments
+            .AsNoTracking()
+            .Where(a => a.TechnicianUserId == userId && a.IsActive
+                        && a.FaultReport.FaultStatusId != FaultStatusIds.Zatvoreno)
+            .Select(a => new ActiveAssignmentInfoDto
+            {
+                AssignmentId = a.Id,
+                ReportNumber = a.FaultReport.ReportNumber,
+                Title = a.FaultReport.Title,
+                PriorityName = a.FaultReport.FaultPriority!.Name
+            })
+            .ToListAsync(ct);
+
+        if (active.Count > 0)
+            throw AppException.Conflict(
+                $"Izvršitelj ima {active.Count} aktivnih naloga. Prebacite ih na zamjenika prije deaktivacije.",
+                payload: active);
+
+        var user = await db.Users.FindAsync([userId], ct)
+            ?? throw AppException.NotFound(NotFoundMessage);
+
+        user.IsActive = false;
+        user.DeactivatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
     }
 
@@ -165,6 +199,10 @@ public sealed class UserService(AppDbContext db) : IUserService
 
         if (requirePassword && string.IsNullOrWhiteSpace(dto.Password))
             errors["password"] = ["Lozinka je obavezna pri kreiranju korisnika."];
+
+        if (requirePassword && !string.IsNullOrWhiteSpace(dto.Password)
+            && dto.Password.Trim().Length < MinPasswordLength)
+            errors["password"] = ["Lozinka mora imati najmanje 8 znakova."];
 
         if (dto.RoleIds.Count == 0)
             errors["roleIds"] = ["Korisnik mora imati barem jednu ulogu."];

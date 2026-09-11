@@ -1,0 +1,397 @@
+@page "/interventions/{Id:int}"
+@using EKvarovi.Shared.Dtos.Attachments
+@using EKvarovi.Shared.Dtos.Interventions
+@using EKvarovi.Shared.Dtos.Materials
+@using EKvarovi.Shared.Enums
+@inject ApiClient Api
+@inject JwtAuthStateProvider AuthState
+@inject NavigationManager Navigation
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<PageTitle>@(_intervention is null ? "Intervencija" : $"Intervencija #{_intervention.Id}")</PageTitle>
+
+@if (!string.IsNullOrEmpty(_error))
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" Dense="true">@_error</MudAlert>
+}
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Class="mb-4" />
+}
+else if (_intervention is not null)
+{
+    <MudStack Spacing="4">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+            <MudIconButton Icon="@Icons.Material.Filled.ArrowBack"
+                           Color="Color.Default"
+                           OnClick="GoBack"
+                           aria-label="Natrag" />
+            <MudText Typo="Typo.h4">Intervencija #@_intervention.Id</MudText>
+            <MudChip T="string"
+                     Size="Size.Small"
+                     Color="@InterventionChipColor(_intervention.InterventionStatusId)">
+                @_intervention.StatusName
+            </MudChip>
+        </MudStack>
+
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+            <MudLink Href="@($"/fault-reports/{_intervention.FaultReportId}")">
+                @_intervention.ReportNumber — @_intervention.Title
+            </MudLink>
+            <PriorityBadge Name="@_intervention.PriorityName" Color="@_intervention.PriorityColor" />
+            <StatusBadge Name="@_intervention.FaultStatusName" StatusId="@_intervention.FaultStatusId" />
+        </MudStack>
+
+        @if (CanModify)
+        {
+            <MudPaper Class="pa-3" Elevation="1">
+                <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Save"
+                               Disabled="_savingNote"
+                               OnClick="SaveNoteAsync">
+                        @if (_savingNote)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                        }
+                        Spremi bilješku
+                    </MudButton>
+                    <MudButton Variant="Variant.Filled"
+                               Color="Color.Success"
+                               StartIcon="@Icons.Material.Filled.CheckCircle"
+                               OnClick="OpenFinishDialogAsync">
+                        Završi intervenciju
+                    </MudButton>
+                </MudStack>
+            </MudPaper>
+        }
+
+        <MudGrid Spacing="3">
+            <MudItem xs="12" md="6">
+                <MudPaper Class="pa-4" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-3">Podaci o intervenciji</MudText>
+                    <MudStack Spacing="2">
+                        <DetailRow Label="Izvršitelj" Value="@_intervention.TechnicianName" />
+                        <DetailRow Label="Lokacija" Value="@_intervention.LocationName" />
+                        <DetailRow Label="Početak" Value="@FormatDateTime(_intervention.StartedAt)" />
+                        <DetailRow Label="Završetak" Value="@FormatDateTime(_intervention.FinishedAt)" />
+                        @if (!string.IsNullOrWhiteSpace(_intervention.FailureReason))
+                        {
+                            <DetailRow Label="Razlog neuspjeha" Value="@_intervention.FailureReason" Multiline="true" />
+                        }
+                        <DetailRow Label="Trošak materijala" Value="@($"{_intervention.TotalMaterialCost:N2} €")" />
+                    </MudStack>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" md="6">
+                <MudPaper Class="pa-4" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-3">Bilješka</MudText>
+                    @if (CanModify)
+                    {
+                        <MudTextField @bind-Value="_note"
+                                      Label="Bilješka intervencije"
+                                      Lines="8"
+                                      Counter="2000"
+                                      MaxLength="2000"
+                                      FullWidth="true"
+                                      Variant="Variant.Outlined" />
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.body2" Style="white-space: pre-wrap;">
+                            @(string.IsNullOrWhiteSpace(_intervention.Note) ? "—" : _intervention.Note)
+                        </MudText>
+                    }
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+
+        <MudPaper Class="pa-4" Elevation="1">
+            <MudText Typo="Typo.subtitle1" Class="mb-3">Fotografije poslije</MudText>
+            <AttachmentPanel Title="Fotografije poslije"
+                             Items="_intervention.PhotosAfter"
+                             Purpose="AttachmentPurpose.PhotoAfter"
+                             UploadMode="AttachmentUploadMode.Intervention"
+                             TargetId="Id"
+                             CanUpload="CanModify"
+                             CanDeleteItem="CanDeleteAttachment"
+                             EnableCameraCapture="true"
+                             OnChanged="LoadAsync" />
+        </MudPaper>
+
+        <MudPaper Class="pa-4" Elevation="1">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+                <MudText Typo="Typo.subtitle1">Utrošeni materijal</MudText>
+                <MudText Typo="Typo.subtitle2">
+                    Ukupno: <b>@($"{TotalMaterialCost:N2} €")</b>
+                </MudText>
+            </MudStack>
+
+            @if (_materials.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">Nema evidentiranog materijala.</MudText>
+            }
+            else
+            {
+                <MudTable T="InterventionMaterialDto" Items="_materials" Hover="true" Dense="true" Breakpoint="Breakpoint.Sm" Class="mb-3">
+                    <HeaderContent>
+                        <MudTh>Šifra</MudTh>
+                        <MudTh>Materijal</MudTh>
+                        <MudTh>Jedinica</MudTh>
+                        <MudTh>Količina</MudTh>
+                        <MudTh>Jed. cijena</MudTh>
+                        <MudTh>Ukupno</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Šifra">@context.MaterialCode</MudTd>
+                        <MudTd DataLabel="Materijal">@context.MaterialName</MudTd>
+                        <MudTd DataLabel="Jedinica">@context.MaterialUnitName</MudTd>
+                        <MudTd DataLabel="Količina">@context.Quantity.ToString("N2")</MudTd>
+                        <MudTd DataLabel="Jed. cijena">@context.UnitPriceSnapshot.ToString("N2") €</MudTd>
+                        <MudTd DataLabel="Ukupno">@context.LineTotal.ToString("N2") €</MudTd>
+                    </RowTemplate>
+                </MudTable>
+            }
+
+            @if (CanModify)
+            {
+                <MudDivider Class="my-3" />
+                <MudText Typo="Typo.body2" Class="mb-3">Dodaj stavku materijala</MudText>
+                <MudGrid Spacing="2">
+                    <MudItem xs="12" md="5">
+                        <MudSelect T="int?"
+                                   @bind-Value="_selectedMaterialId"
+                                   Label="Materijal"
+                                   Required="true"
+                                   Clearable="true">
+                            @foreach (var material in AvailableMaterials)
+                            {
+                                <MudSelectItem T="int?" Value="@material.Id">
+                                    @material.Code — @material.Name (@material.UnitPrice.ToString("N2") €/@material.MaterialUnitName)
+                                </MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" md="3">
+                        <MudNumericField @bind-Value="_quantity"
+                                         Label="Količina"
+                                         Min="0.01m"
+                                         Max="99999.99m"
+                                         Format="N2"
+                                         Required="true" />
+                    </MudItem>
+                    <MudItem xs="12" md="4" Class="d-flex align-center">
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.Add"
+                                   Disabled="_addingMaterial || !_selectedMaterialId.HasValue || _quantity <= 0"
+                                   OnClick="AddMaterialAsync">
+                            @if (_addingMaterial)
+                            {
+                                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                            }
+                            Dodaj stavku
+                        </MudButton>
+                    </MudItem>
+                </MudGrid>
+            }
+        </MudPaper>
+    </MudStack>
+}
+
+@code {
+    [Parameter]
+    public int Id { get; set; }
+
+    private InterventionDetailDto? _intervention;
+    private readonly List<InterventionMaterialDto> _materials = [];
+    private readonly List<MaterialListDto> _catalogMaterials = [];
+    private string? _note;
+    private int? _selectedMaterialId;
+    private decimal _quantity = 1;
+    private bool _loading = true;
+    private bool _savingNote;
+    private bool _addingMaterial;
+    private bool _isAdmin;
+    private bool _isAdminOrManager;
+    private int _currentUserId;
+    private string? _error;
+
+    private bool CanModify =>
+        _intervention is not null
+        && _intervention.InterventionStatusId == InterventionStatusIds.UTijeku
+        && (_isAdmin || _intervention.TechnicianUserId == _currentUserId);
+
+    private decimal TotalMaterialCost =>
+        _intervention?.TotalMaterialCost ?? _materials.Sum(m => m.LineTotal);
+
+    private IEnumerable<MaterialListDto> AvailableMaterials =>
+        _catalogMaterials.Where(m => _materials.All(i => i.MaterialId != m.Id));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        if (state.User.Identity?.IsAuthenticated != true)
+        {
+            Navigation.NavigateTo("/login");
+            return;
+        }
+
+        _isAdmin = state.User.IsInRole(Roles.Admin);
+        _isAdminOrManager = state.User.IsInRole(Roles.Admin) || state.User.IsInRole(Roles.Manager);
+        _ = int.TryParse(state.User.FindFirst("sub")?.Value, out _currentUserId);
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+
+        try
+        {
+            _intervention = await Api.GetInterventionAsync(Id);
+            _note = _intervention.Note;
+
+            _materials.Clear();
+            _materials.AddRange(await Api.GetInterventionMaterialsAsync(Id));
+
+            if (CanModify)
+            {
+                var catalog = await Api.GetMaterialsAsync(new MaterialFilterDto
+                {
+                    Page = 1,
+                    PageSize = 100,
+                    IsActive = true,
+                    SortBy = "name",
+                    SortDir = "asc"
+                });
+                _catalogMaterials.Clear();
+                _catalogMaterials.AddRange(catalog.Items);
+            }
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+            _intervention = null;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SaveNoteAsync()
+    {
+        if (_intervention is null || !CanModify)
+            return;
+
+        _savingNote = true;
+        _error = null;
+
+        try
+        {
+            _intervention = await Api.UpdateInterventionAsync(Id, new InterventionUpdateDto
+            {
+                Note = string.IsNullOrWhiteSpace(_note) ? null : _note.Trim()
+            });
+            _note = _intervention.Note;
+            Snackbar.Add("Bilješka spremljena.", Severity.Success);
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _savingNote = false;
+        }
+    }
+
+    private async Task AddMaterialAsync()
+    {
+        if (_intervention is null || !CanModify || !_selectedMaterialId.HasValue || _quantity <= 0)
+            return;
+
+        _addingMaterial = true;
+        _error = null;
+
+        try
+        {
+            await Api.AddInterventionMaterialAsync(Id, new InterventionMaterialSaveDto
+            {
+                MaterialId = _selectedMaterialId.Value,
+                Quantity = _quantity
+            });
+
+            _selectedMaterialId = null;
+            _quantity = 1;
+            Snackbar.Add("Stavka materijala dodana.", Severity.Success);
+            await LoadAsync();
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _addingMaterial = false;
+        }
+    }
+
+    private async Task OpenFinishDialogAsync()
+    {
+        if (_intervention is null || !CanModify)
+            return;
+
+        var parameters = new DialogParameters<FinishInterventionDialog>
+        {
+            { d => d.InterventionId, Id },
+            { d => d.InitialNote, _note }
+        };
+
+        var dialog = await DialogService.ShowAsync<FinishInterventionDialog>(null, parameters, DialogOptions());
+        if (await DialogSucceededAsync(dialog))
+        {
+            Snackbar.Add("Intervencija završena.", Severity.Success);
+            await LoadAsync();
+        }
+    }
+
+    private void GoBack() => Navigation.NavigateTo("/interventions");
+
+    private static DialogOptions DialogOptions() => new()
+    {
+        CloseButton = true,
+        MaxWidth = MaxWidth.Small,
+        FullWidth = true
+    };
+
+    private static async Task<bool> DialogSucceededAsync(IDialogReference dialog)
+    {
+        var result = await dialog.Result;
+        return result is not null && !result.Canceled;
+    }
+
+    private static string FormatDateTime(DateTime? value) =>
+        value.HasValue ? value.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm") : "—";
+
+    private bool CanDeleteAttachment(AttachmentDto item) =>
+        _isAdminOrManager || item.UploadedByUserId == _currentUserId;
+
+    private static Color InterventionChipColor(int statusId) => statusId switch
+    {
+        InterventionStatusIds.Planirana => Color.Default,
+        InterventionStatusIds.UTijeku => Color.Warning,
+        InterventionStatusIds.Zavrsena => Color.Success,
+        InterventionStatusIds.Neuspjesna => Color.Error,
+        _ => Color.Default
+    };
+}

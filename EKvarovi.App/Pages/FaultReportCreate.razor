@@ -1,0 +1,282 @@
+@page "/fault-reports/new"
+@using EKvarovi.Shared.Dtos.Auth
+@using EKvarovi.Shared.Dtos.FaultReports
+@using EKvarovi.Shared.Dtos.Locations
+@using EKvarovi.Shared.Enums
+@inject ApiClient Api
+@inject JwtAuthStateProvider AuthState
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+
+<PageTitle>Nova prijava</PageTitle>
+
+<MudGrid Justify="Justify.Center">
+    <MudItem xs="12" sm="10" md="8" lg="6">
+        <MudText Typo="Typo.h4" Class="mb-4">Nova prijava kvara</MudText>
+
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-4" Dense="true">@_error</MudAlert>
+        }
+
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" Class="mb-4" />
+        }
+        else if (_canCreate)
+        {
+            <MudPaper Class="pa-6" Elevation="2">
+                <MudForm @ref="_form" Model="_model" @bind-IsValid="_valid">
+                    <MudTextField @bind-Value="_model.Title"
+                                  Label="Naslov"
+                                  Required="true"
+                                  Counter="200"
+                                  MaxLength="200"
+                                  Immediate="true"
+                                  Validation="@(new Func<string, IEnumerable<string>>(ValidateTitle))"
+                                  Class="mb-4" />
+                    <MudTextField @bind-Value="_model.Description"
+                                  Label="Opis"
+                                  Required="true"
+                                  Lines="5"
+                                  Counter="2000"
+                                  MaxLength="2000"
+                                  Immediate="true"
+                                  Validation="@(new Func<string, IEnumerable<string>>(ValidateDescription))"
+                                  Class="mb-4" />
+                    <MudSelect T="int"
+                               @bind-Value="_model.LocationId"
+                               Label="Lokacija"
+                               Required="true"
+                               RequiredError="Lokacija je obavezna."
+                               Class="mb-2">
+                        @foreach (var loc in _locations)
+                        {
+                            <MudSelectItem T="int" Value="@loc.Id">@loc.Name (@loc.Code)</MudSelectItem>
+                        }
+                    </MudSelect>
+                    @if (_homeLocationId.HasValue && _model.LocationId == _homeLocationId.Value)
+                    {
+                        <MudText Typo="Typo.caption" Class="mb-4 mud-text-secondary">
+                            Predodabrana matična lokacija: @_homeLocationName
+                        </MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.caption" Class="mb-4 mud-text-secondary">
+                            Možete odabrati i drugu lokaciju od matične.
+                        </MudText>
+                    }
+
+                    <MudText Typo="Typo.subtitle2" Class="mb-2">Fotografije prije (opcionalno)</MudText>
+                    <InputFile id="@_photoInputId"
+                               OnChange="OnPhotosSelected"
+                               accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                               capture="environment"
+                               multiple
+                               disabled="_busy"
+                               class="d-none" />
+                    <MudButton Variant="Variant.Outlined"
+                               Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.AddAPhoto"
+                               Disabled="_busy || _selectedPhotos.Count >= 5"
+                               HtmlTag="label"
+                               for="@_photoInputId"
+                               Class="mb-2">
+                        Dodaj fotografiju
+                    </MudButton>
+                    <MudText Typo="Typo.caption" Class="mb-2 mud-text-secondary">
+                        Do 5 fotografija (JPG, PNG, WEBP, max 5 MB).
+                    </MudText>
+                    @if (_selectedPhotos.Count > 0)
+                    {
+                        <MudList T="string" Dense="true" Class="mb-4">
+                            @foreach (var photo in _selectedPhotos)
+                            {
+                                <MudListItem T="string">
+                                    <div class="d-flex align-center justify-space-between" style="width: 100%;">
+                                        <MudText Typo="Typo.body2">@photo.Name</MudText>
+                                        <MudIconButton Icon="@Icons.Material.Filled.Close"
+                                                       Size="Size.Small"
+                                                       aria-label="Ukloni"
+                                                       Disabled="_busy"
+                                                       OnClick="@(() => RemovePhoto(photo))" />
+                                    </div>
+                                </MudListItem>
+                            }
+                        </MudList>
+                    }
+
+                    <MudStack Row="true" Spacing="2" Justify="Justify.FlexEnd">
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="Color.Default"
+                                   Disabled="_busy"
+                                   OnClick="Cancel">
+                            Odustani
+                        </MudButton>
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   Disabled="_busy"
+                                   OnClick="SubmitAsync">
+                            @if (_busy)
+                            {
+                                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                            }
+                            Pošalji prijavu
+                        </MudButton>
+                    </MudStack>
+                </MudForm>
+            </MudPaper>
+        }
+    </MudItem>
+</MudGrid>
+
+@code {
+    private const long MaxPhotoBytes = 5L * 1024 * 1024;
+
+    private readonly FaultReportCreateDto _model = new();
+    private readonly List<LocationListDto> _locations = [];
+    private readonly List<IBrowserFile> _selectedPhotos = [];
+    private readonly string _photoInputId = $"create-photo-{Guid.NewGuid():N}";
+    private MudForm? _form;
+    private bool _valid;
+    private bool _busy;
+    private bool _loading = true;
+    private bool _canCreate;
+    private int? _homeLocationId;
+    private string? _homeLocationName;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        if (state.User.Identity?.IsAuthenticated != true)
+        {
+            Navigation.NavigateTo("/login");
+            return;
+        }
+
+        _canCreate = state.User.IsInRole(Roles.Reporter)
+                     || state.User.IsInRole(Roles.Manager)
+                     || state.User.IsInRole(Roles.Admin);
+
+        if (!_canCreate)
+        {
+            _error = "Nemate ovlasti za kreiranje prijava.";
+            _loading = false;
+            return;
+        }
+
+        try
+        {
+            var me = await Api.GetMeAsync();
+            _homeLocationId = me.HomeLocationId;
+            _homeLocationName = me.HomeLocationName;
+
+            var locations = await Api.GetLocationsAsync(new LocationFilterDto
+            {
+                Page = 1,
+                PageSize = 100,
+                IsActive = true,
+                SortBy = "name",
+                SortDir = "asc"
+            });
+            _locations.AddRange(locations.Items);
+
+            if (_homeLocationId is int homeId && _locations.Any(l => l.Id == homeId))
+                _model.LocationId = homeId;
+            else if (_locations.Count > 0)
+                _model.LocationId = _locations[0].Id;
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static IEnumerable<string> ValidateTitle(string title)
+    {
+        var trimmed = title?.Trim() ?? string.Empty;
+        if (trimmed.Length == 0)
+            yield return "Naslov je obavezan.";
+        else if (trimmed.Length < 5)
+            yield return "Naslov mora imati najmanje 5 znakova.";
+    }
+
+    private static IEnumerable<string> ValidateDescription(string description)
+    {
+        var trimmed = description?.Trim() ?? string.Empty;
+        if (trimmed.Length == 0)
+            yield return "Opis je obavezan.";
+        else if (trimmed.Length < 10)
+            yield return "Opis mora imati najmanje 10 znakova.";
+    }
+
+    private void Cancel() => Navigation.NavigateTo("/my-reports");
+
+    private void OnPhotosSelected(InputFileChangeEventArgs e)
+    {
+        var remaining = 5 - _selectedPhotos.Count;
+        if (remaining <= 0)
+        {
+            Snackbar.Add("Možete dodati najviše 5 fotografija.", Severity.Warning);
+            return;
+        }
+
+        foreach (var file in e.GetMultipleFiles(remaining))
+            _selectedPhotos.Add(file);
+    }
+
+    private void RemovePhoto(IBrowserFile file) => _selectedPhotos.Remove(file);
+
+    private async Task SubmitAsync()
+    {
+        if (_form is null)
+            return;
+
+        await _form.ValidateAsync();
+        if (!_valid || _model.LocationId <= 0)
+            return;
+
+        _error = null;
+        _busy = true;
+
+        try
+        {
+            var result = await Api.CreateFaultReportAsync(_model);
+
+            foreach (var photo in _selectedPhotos)
+            {
+                try
+                {
+                    await using var stream = photo.OpenReadStream(MaxPhotoBytes);
+                    await Api.UploadFaultReportAttachmentAsync(
+                        result.Id,
+                        AttachmentPurpose.PhotoBefore,
+                        stream,
+                        photo.Name,
+                        photo.ContentType);
+                }
+                catch (ApiClientException ex)
+                {
+                    Snackbar.Add($"Prijava je kreirana, ali upload „{photo.Name}” nije uspio: {ex.Message}",
+                        Severity.Warning);
+                }
+            }
+
+            Navigation.NavigateTo($"/fault-reports/{result.Id}");
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

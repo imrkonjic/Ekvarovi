@@ -2,9 +2,14 @@ namespace EKvarovi.Shared.Common;
 
 public abstract class PagedRequest
 {
+    private int _page = 1;
     private int _pageSize = 10;
 
-    public int Page { get; set; } = 1;
+    public int Page
+    {
+        get => _page;
+        set => _page = value < 1 ? 1 : value;
+    }
     public int PageSize
     {
         get => _pageSize;

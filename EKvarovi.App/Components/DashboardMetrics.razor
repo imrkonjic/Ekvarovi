@@ -1,0 +1,160 @@
+@using EKvarovi.Shared.Dtos.Dashboard
+@inject LookupCache Lookups
+
+@if (Data is not null)
+{
+<MudGrid Spacing="3" Class="mb-4">
+    <MudItem xs="12" sm="6" md="4">
+        <MudPaper Class="pa-4 dashboard-stat" Elevation="2">
+            <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Ukupno prijava</MudText>
+            <MudText Typo="Typo.h4">@Data.TotalReportCount</MudText>
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12" sm="6" md="4">
+        <MudPaper Class="@GetOverdueStatClass()" Elevation="2">
+            <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Kasni rok</MudText>
+            <MudText Typo="Typo.h4">@Data.OverdueCount</MudText>
+        </MudPaper>
+    </MudItem>
+    @if (!Compact)
+    {
+        <MudItem xs="12" md="4">
+            <MudPaper Class="pa-4 dashboard-stat" Elevation="2">
+                <MudText Typo="Typo.subtitle2" Class="mud-text-secondary">Opseg</MudText>
+                <MudText Typo="Typo.h6">@Data.ScopeLabel</MudText>
+                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                    @FormatPeriod(Data.PeriodFrom, Data.PeriodTo)
+                </MudText>
+            </MudPaper>
+        </MudItem>
+    }
+</MudGrid>
+
+<MudGrid Spacing="3">
+    <MudItem xs="12" md="6">
+        <MudPaper Class="pa-4 h-100" Elevation="1">
+            <MudText Typo="Typo.h6" Class="mb-3">Prijave po statusu</MudText>
+            @if (Data.ReportsByStatus.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">Nema podataka.</MudText>
+            }
+            else
+            {
+                <MudSimpleTable Dense="true" Hover="true">
+                    <tbody>
+                        @foreach (var item in Data.ReportsByStatus)
+                        {
+                            <tr>
+                                <td><StatusBadge Name="@item.Name" /></td>
+                                <td class="text-end">@item.Count</td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            }
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" md="6">
+        <MudPaper Class="pa-4 h-100" Elevation="1">
+            <MudText Typo="Typo.h6" Class="mb-3">Otvorene po prioritetu</MudText>
+            @if (Data.OpenReportsByPriority.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Class="mud-text-secondary">Nema podataka.</MudText>
+            }
+            else
+            {
+                <MudSimpleTable Dense="true" Hover="true">
+                    <tbody>
+                        @foreach (var item in Data.OpenReportsByPriority)
+                        {
+                            <tr>
+                                <td>
+                                    <PriorityBadge Name="@item.Name"
+                                                   Color="@GetPriorityColor(item.Id)" />
+                                </td>
+                                <td class="text-end">@item.Count</td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            }
+        </MudPaper>
+    </MudItem>
+
+    @if (!Compact)
+    {
+        <MudItem xs="12" md="6">
+            <MudPaper Class="pa-4 h-100" Elevation="1">
+                <MudText Typo="Typo.h6" Class="mb-3">Vodeće lokacije</MudText>
+                @if (Data.TopLocations.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Class="mud-text-secondary">Nema podataka.</MudText>
+                }
+                else
+                {
+                    <MudSimpleTable Dense="true" Hover="true">
+                        <tbody>
+                            @foreach (var item in Data.TopLocations)
+                            {
+                                <tr>
+                                    <td>@item.LocationName</td>
+                                    <td class="text-end">@item.ReportCount</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                }
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" md="6">
+            <MudPaper Class="pa-4 h-100" Elevation="1">
+                <MudText Typo="Typo.h6" Class="mb-3">Prijave po vrsti kvara</MudText>
+                @if (Data.ReportsByFaultType.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Class="mud-text-secondary">Nema podataka.</MudText>
+                }
+                else
+                {
+                    <MudSimpleTable Dense="true" Hover="true">
+                        <tbody>
+                            @foreach (var item in Data.ReportsByFaultType)
+                            {
+                                <tr>
+                                    <td>@item.Name</td>
+                                    <td class="text-end">@item.Count</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                }
+            </MudPaper>
+        </MudItem>
+    }
+</MudGrid>
+}
+
+@code {
+    [Parameter]
+    public DashboardDto? Data { get; set; }
+
+    [Parameter]
+    public bool Compact { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Lookups.EnsureLoadedAsync();
+    }
+
+    private string? GetPriorityColor(int? id)
+        => Lookups.Priorities.FirstOrDefault(p => p.Id == id)?.ColorHex;
+
+    private string GetOverdueStatClass()
+        => Data!.OverdueCount > 0
+            ? "pa-4 dashboard-stat dashboard-stat--overdue"
+            : "pa-4 dashboard-stat";
+
+    private static string FormatPeriod(DateTime from, DateTime to)
+        => $"{from.ToLocalTime():dd.MM.yyyy} – {to.ToLocalTime():dd.MM.yyyy}";
+}

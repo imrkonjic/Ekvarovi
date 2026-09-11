@@ -1,0 +1,133 @@
+@using EKvarovi.Shared.Dtos.FaultReports
+@using EKvarovi.Shared.Enums
+@inject ApiClient Api
+@inject LookupCache Lookups
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Kategorizacija prijave @ReportNumber</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3" Dense="true">@_error</MudAlert>
+        }
+        <MudSelect T="int?"
+                   @bind-Value="_faultTypeId"
+                   Label="Vrsta kvara"
+                   Required="true"
+                   RequiredError="Vrsta je obavezna."
+                   Class="mb-3">
+            @foreach (var type in Lookups.FaultTypes)
+            {
+                <MudSelectItem T="int?" Value="@type.Id">@type.Name</MudSelectItem>
+            }
+        </MudSelect>
+        <MudSelect T="int?"
+                   @bind-Value="_faultPriorityId"
+                   @bind-Value:after="SuggestDueDate"
+                   Label="Prioritet"
+                   Required="true"
+                   RequiredError="Prioritet je obavezan."
+                   Class="mb-3">
+            @foreach (var prio in Lookups.Priorities)
+            {
+                <MudSelectItem T="int?" Value="@prio.Id">@prio.Name</MudSelectItem>
+            }
+        </MudSelect>
+        <MudDatePicker @bind-Date="_dueDate"
+                       Label="Rok"
+                       Required="_faultPriorityId == FaultPriorityIds.Kritican"
+                       RequiredError="Kritičan prioritet zahtijeva rok." />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Odustani</MudButton>
+        <MudButton Color="Color.Primary"
+                   Variant="Variant.Filled"
+                   Disabled="_busy || !_faultTypeId.HasValue || !_faultPriorityId.HasValue"
+                   OnClick="SubmitAsync">
+            @if (_busy)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Spremi
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter]
+    public int FaultReportId { get; set; }
+
+    [Parameter]
+    public string ReportNumber { get; set; } = string.Empty;
+
+    [Parameter]
+    public int? InitialFaultTypeId { get; set; }
+
+    [Parameter]
+    public int? InitialFaultPriorityId { get; set; }
+
+    [Parameter]
+    public DateTime? InitialDueDate { get; set; }
+
+    private int? _faultTypeId;
+    private int? _faultPriorityId;
+    private DateTime? _dueDate;
+    private bool _busy;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Lookups.EnsureLoadedAsync();
+        _faultTypeId = InitialFaultTypeId;
+        _faultPriorityId = InitialFaultPriorityId;
+        _dueDate = InitialDueDate?.ToLocalTime();
+    }
+
+    private void SuggestDueDate()
+    {
+        var priority = Lookups.Priorities.FirstOrDefault(p => p.Id == _faultPriorityId);
+        if (priority is not null)
+            _dueDate = DateTime.Now.AddHours(priority.DefaultResolutionHours);
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (!_faultTypeId.HasValue || !_faultPriorityId.HasValue)
+            return;
+
+        if (_faultPriorityId == FaultPriorityIds.Kritican && !_dueDate.HasValue)
+        {
+            _error = "Kritičan prioritet zahtijeva rok.";
+            return;
+        }
+
+        _busy = true;
+        _error = null;
+
+        try
+        {
+            await Api.TriageFaultReportAsync(FaultReportId, new FaultReportTriageDto
+            {
+                FaultTypeId = _faultTypeId.Value,
+                FaultPriorityId = _faultPriorityId.Value,
+                DueDate = _dueDate
+            });
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Close(DialogResult.Cancel());
+}

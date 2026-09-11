@@ -1,0 +1,163 @@
+@using EKvarovi.Shared.Common
+@using EKvarovi.Shared.Dtos.Assignments
+@using EKvarovi.Shared.Dtos.FaultReports
+@inject ApiClient Api
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Dodjela prijave @DisplayReportNumber</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3" Dense="true">@_error</MudAlert>
+        }
+        @if (RequireFaultReportSelection)
+        {
+            <MudAutocomplete T="FaultReportListDto"
+                             @bind-Value="_selectedReport"
+                             Label="Prijava"
+                             SearchFunc="SearchReportsAsync"
+                             ToStringFunc="@ReportLabel"
+                             ResetValueOnEmptyText="true"
+                             Clearable="true"
+                             Required="true"
+                             RequiredError="Prijava je obavezna."
+                             Class="mb-3" />
+        }
+        <MudSelect T="int?"
+                   @bind-Value="_technicianId"
+                   Label="Izvršitelj"
+                   Required="true"
+                   RequiredError="Izvršitelj je obavezan."
+                   Class="mb-3">
+            @foreach (var tech in _technicians)
+            {
+                <MudSelectItem T="int?" Value="@tech.Id">@tech.Name</MudSelectItem>
+            }
+        </MudSelect>
+        <MudTextField @bind-Value="_note"
+                      Label="Napomena"
+                      Lines="3"
+                      MaxLength="1000"
+                      Counter="1000" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Odustani</MudButton>
+        <MudButton Color="Color.Primary"
+                   Variant="Variant.Filled"
+                   Disabled="_busy || !_technicianId.HasValue || !HasSelectedReport"
+                   OnClick="SubmitAsync">
+            @if (_busy)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Dodijeli
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter]
+    public int FaultReportId { get; set; }
+
+    [Parameter]
+    public string ReportNumber { get; set; } = string.Empty;
+
+    [Parameter]
+    public bool RequireFaultReportSelection { get; set; }
+
+    private readonly List<LookupDto> _technicians = [];
+    private FaultReportListDto? _selectedReport;
+    private int? _technicianId;
+    private string? _note;
+    private bool _busy;
+    private string? _error;
+
+    private string DisplayReportNumber =>
+        RequireFaultReportSelection
+            ? _selectedReport?.ReportNumber ?? "…"
+            : ReportNumber;
+
+    private bool HasSelectedReport =>
+        !RequireFaultReportSelection || _selectedReport is not null;
+
+    private int TargetFaultReportId =>
+        RequireFaultReportSelection ? _selectedReport!.Id : FaultReportId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _technicians.AddRange(await Api.GetTechniciansAsync());
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (!_technicianId.HasValue || !HasSelectedReport)
+            return;
+
+        _busy = true;
+        _error = null;
+
+        try
+        {
+            await Api.AssignAsync(new AssignmentSaveDto
+            {
+                FaultReportId = TargetFaultReportId,
+                TechnicianUserId = _technicianId.Value,
+                Note = string.IsNullOrWhiteSpace(_note) ? null : _note.Trim()
+            });
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static string? ReportLabel(FaultReportListDto? report) =>
+        report is null ? null : $"{report.ReportNumber} — {report.Title}";
+
+    private async Task<IEnumerable<FaultReportListDto>> SearchReportsAsync(string value, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return [];
+
+        try
+        {
+            var result = await Api.GetFaultReportsAsync(new FaultReportFilterDto
+            {
+                Search = value.Trim(),
+                Page = 1,
+                PageSize = 20
+            }, ct);
+
+            return result.Items.Where(CanAssign);
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static bool CanAssign(FaultReportListDto report) =>
+        report.TechnicianName is null
+        && report.PriorityName is not null
+        && report.FaultTypeName is not null
+        && report.StatusName != "Zatvoreno";
+
+    private void Cancel() => MudDialog.Close(DialogResult.Cancel());
+}

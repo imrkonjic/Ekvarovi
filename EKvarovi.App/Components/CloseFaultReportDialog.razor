@@ -1,0 +1,90 @@
+@using EKvarovi.Shared.Dtos.FaultReports
+@inject ApiClient Api
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Zatvaranje prijave @ReportNumber</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3" Dense="true">@_error</MudAlert>
+        }
+        <MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
+            Prijava mora imati barem jednu uspješnu intervenciju. Unesite napomenu provjere.
+        </MudText>
+        <MudTextField @bind-Value="_closingNote"
+                      Label="Napomena provjere"
+                      Required="true"
+                      Lines="4"
+                      Counter="1000"
+                      MaxLength="1000"
+                      Immediate="true"
+                      Validation="@(new Func<string, IEnumerable<string>>(ValidateNote))" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Odustani</MudButton>
+        <MudButton Color="Color.Success"
+                   Variant="Variant.Filled"
+                   Disabled="_busy || string.IsNullOrWhiteSpace(_closingNote)"
+                   OnClick="SubmitAsync">
+            @if (_busy)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Zatvori prijavu
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter]
+    public int FaultReportId { get; set; }
+
+    [Parameter]
+    public string ReportNumber { get; set; } = string.Empty;
+
+    private string _closingNote = string.Empty;
+    private bool _busy;
+    private string? _error;
+
+    private static IEnumerable<string> ValidateNote(string note)
+    {
+        var trimmed = note?.Trim() ?? string.Empty;
+        if (trimmed.Length == 0)
+            yield return "Napomena je obavezna.";
+        else if (trimmed.Length < 5)
+            yield return "Napomena mora imati najmanje 5 znakova.";
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_closingNote))
+            return;
+
+        _busy = true;
+        _error = null;
+
+        try
+        {
+            await Api.CloseFaultReportAsync(FaultReportId, new CloseFaultReportDto
+            {
+                ClosingNote = _closingNote.Trim()
+            });
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Close(DialogResult.Cancel());
+}

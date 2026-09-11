@@ -44,4 +44,9 @@ public class LookupsController(ILookupService lookupService) : ControllerBase
     [Authorize(Roles = Roles.Admin)]
     public Task<List<LookupDto>> GetRoles(CancellationToken ct)
         => lookupService.GetRolesAsync(ct);
+
+    [HttpGet("technicians")]
+    [Authorize(Roles = $"{Roles.Admin},{Roles.Manager}")]
+    public Task<List<LookupDto>> GetTechnicians([FromQuery] string? search, CancellationToken ct)
+        => lookupService.GetTechniciansAsync(search, ct);
 }

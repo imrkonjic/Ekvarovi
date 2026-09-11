@@ -1,0 +1,267 @@
+@page "/locations"
+@using EKvarovi.Shared.Common
+@using EKvarovi.Shared.Dtos.Locations
+@using EKvarovi.Shared.Enums
+@inject ApiClient Api
+@inject LookupCache Lookups
+@inject JwtAuthStateProvider AuthState
+@inject NavigationManager Navigation
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<PageTitle>Lokacije</PageTitle>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-4" Wrap="Wrap.Wrap">
+    <MudText Typo="Typo.h4">Lokacije</MudText>
+    @if (_isAdmin)
+    {
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Add"
+                   OnClick="OpenCreateDialogAsync">
+            Nova lokacija
+        </MudButton>
+    }
+</MudStack>
+
+@if (!string.IsNullOrEmpty(_error))
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" Dense="true">@_error</MudAlert>
+}
+
+<FilterBar OnReset="ResetFiltersAsync">
+    <MudTextField @bind-Value="_filter.Search"
+                  Label="Pretraga"
+                  Placeholder="Šifra, naziv, adresa, grad…"
+                  Adornment="Adornment.Start"
+                  AdornmentIcon="@Icons.Material.Filled.Search"
+                  Immediate="true"
+                  Style="min-width: 240px;" />
+    <MudSelect T="int?" @bind-Value="_filter.LocationTypeId" Label="Vrsta" Clearable="true" Style="min-width: 200px;">
+        @foreach (var type in Lookups.LocationTypes)
+        {
+            <MudSelectItem T="int?" Value="@type.Id">@type.Name</MudSelectItem>
+        }
+    </MudSelect>
+    <MudSelect T="string?" @bind-Value="_activeFilter" Label="Aktivnost" Clearable="true" Style="min-width: 160px;">
+        <MudSelectItem T="string?" Value="@("true")">Aktivne</MudSelectItem>
+        <MudSelectItem T="string?" Value="@("false")">Neaktivne</MudSelectItem>
+    </MudSelect>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ApplyFiltersAsync">
+        Primijeni
+    </MudButton>
+</FilterBar>
+
+<MudTable T="LocationListDto"
+          @ref="_table"
+          ServerData="LoadAsync"
+          Hover="true"
+          Dense="true"
+          Loading="_loading">
+    <HeaderContent>
+        <MudTh><MudTableSortLabel T="LocationListDto" SortLabel="code">Šifra</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel T="LocationListDto" SortLabel="name">Naziv</MudTableSortLabel></MudTh>
+        <MudTh>Adresa</MudTh>
+        <MudTh><MudTableSortLabel T="LocationListDto" SortLabel="city">Grad</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel T="LocationListDto" SortLabel="locationType">Vrsta</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel T="LocationListDto" SortLabel="isActive">Status</MudTableSortLabel></MudTh>
+        @if (_isAdmin)
+        {
+            <MudTh>Akcije</MudTh>
+        }
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Šifra">@context.Code</MudTd>
+        <MudTd DataLabel="Naziv">@context.Name</MudTd>
+        <MudTd DataLabel="Adresa">@context.Address</MudTd>
+        <MudTd DataLabel="Grad">@context.City</MudTd>
+        <MudTd DataLabel="Vrsta">@context.LocationTypeName</MudTd>
+        <MudTd DataLabel="Status">
+            @if (context.IsActive)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Success">Aktivna</MudChip>
+            }
+            else
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Default">Neaktivna</MudChip>
+            }
+        </MudTd>
+        @if (_isAdmin)
+        {
+            <MudTd DataLabel="Akcije">
+                <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                               Size="Size.Small"
+                               aria-label="Uredi"
+                               OnClick="@(() => OpenEditDialogAsync(context.Id))" />
+                <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                               Size="Size.Small"
+                               Color="Color.Error"
+                               aria-label="Obriši"
+                               OnClick="@(() => ConfirmDeleteAsync(context))" />
+            </MudTd>
+        }
+    </RowTemplate>
+    <NoRecordsContent>
+        <MudText Typo="Typo.body2" Class="pa-4 mud-text-secondary">Nema lokacija za odabrane filtere.</MudText>
+    </NoRecordsContent>
+    <PagerContent>
+        <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+    </PagerContent>
+</MudTable>
+
+@code {
+    private MudTable<LocationListDto>? _table;
+    private LocationFilterDto _filter = new();
+    private string? _activeFilter;
+    private bool _loading;
+    private bool _isAdmin;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        if (state.User.Identity?.IsAuthenticated != true)
+        {
+            Navigation.NavigateTo("/login");
+            return;
+        }
+
+        _isAdmin = state.User.IsInRole(Roles.Admin);
+        await Lookups.EnsureLoadedAsync();
+    }
+
+    private async Task<TableData<LocationListDto>> LoadAsync(TableState state, CancellationToken ct)
+    {
+        _loading = true;
+        _error = null;
+
+        try
+        {
+            SyncActiveFilter();
+
+            _filter.Page = state.Page + 1;
+            _filter.PageSize = state.PageSize;
+            _filter.SortBy = state.SortLabel;
+            _filter.SortDir = state.SortDirection == SortDirection.Ascending ? "asc" : "desc";
+
+            var result = await Api.GetLocationsAsync(_filter, ct);
+            return new TableData<LocationListDto>
+            {
+                Items = result.Items,
+                TotalItems = result.TotalCount
+            };
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+            return new TableData<LocationListDto>
+            {
+                Items = [],
+                TotalItems = 0
+            };
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void SyncActiveFilter()
+    {
+        _filter.IsActive = _activeFilter switch
+        {
+            "true" => true,
+            "false" => false,
+            _ => null
+        };
+    }
+
+    private async Task ApplyFiltersAsync()
+    {
+        _filter.Page = 1;
+        if (_table is not null)
+            await _table.ReloadServerData();
+    }
+
+    private async Task ResetFiltersAsync()
+    {
+        _filter = new LocationFilterDto();
+        _activeFilter = null;
+
+        if (_table is not null)
+            await _table.ReloadServerData();
+    }
+
+    private async Task OpenCreateDialogAsync()
+    {
+        var dialog = await DialogService.ShowAsync<LocationDialog>(
+            null,
+            new DialogParameters<LocationDialog>(),
+            DialogOptions());
+
+        if (await DialogSucceededAsync(dialog))
+        {
+            Snackbar.Add("Lokacija kreirana.", Severity.Success);
+            if (_table is not null)
+                await _table.ReloadServerData();
+        }
+    }
+
+    private async Task OpenEditDialogAsync(int locationId)
+    {
+        var parameters = new DialogParameters<LocationDialog>
+        {
+            { d => d.LocationId, locationId }
+        };
+
+        var dialog = await DialogService.ShowAsync<LocationDialog>(null, parameters, DialogOptions());
+
+        if (await DialogSucceededAsync(dialog))
+        {
+            Snackbar.Add("Lokacija ažurirana.", Severity.Success);
+            if (_table is not null)
+                await _table.ReloadServerData();
+        }
+    }
+
+    private async Task ConfirmDeleteAsync(LocationListDto location)
+    {
+        var parameters = new DialogParameters<ConfirmDialog>
+        {
+            { d => d.Title, "Brisanje lokacije" },
+            { d => d.Message, $"Obrisati lokaciju \"{location.Code} — {location.Name}\"?" },
+            { d => d.ConfirmText, "Obriši" },
+            { d => d.ConfirmColor, Color.Error }
+        };
+
+        var dialog = await DialogService.ShowAsync<ConfirmDialog>(null, parameters, DialogOptions());
+        var result = await dialog.Result;
+        if (result is null || result.Canceled)
+            return;
+
+        try
+        {
+            await Api.DeleteLocationAsync(location.Id);
+            Snackbar.Add("Lokacija obrisana.", Severity.Success);
+            if (_table is not null)
+                await _table.ReloadServerData();
+        }
+        catch (ApiClientException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private static DialogOptions DialogOptions() => new()
+    {
+        CloseButton = true,
+        MaxWidth = MaxWidth.Medium,
+        FullWidth = true
+    };
+
+    private static async Task<bool> DialogSucceededAsync(IDialogReference dialog)
+    {
+        var result = await dialog.Result;
+        return result is not null && !result.Canceled;
+    }
+}

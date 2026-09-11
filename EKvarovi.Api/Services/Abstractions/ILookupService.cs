@@ -12,5 +12,6 @@ public interface ILookupService
     Task<List<LookupDto>> GetInterventionStatusesAsync(CancellationToken ct = default);
     Task<List<LookupDto>> GetMaterialUnitsAsync(CancellationToken ct = default);
     Task<List<LookupDto>> GetRolesAsync(CancellationToken ct = default);
+    Task<List<LookupDto>> GetTechniciansAsync(string? search = null, CancellationToken ct = default);
     Task<AllLookupsDto> GetAllAsync(CancellationToken ct = default);
 }

@@ -1,0 +1,294 @@
+@page "/assignments"
+@using EKvarovi.Shared.Common
+@using EKvarovi.Shared.Dtos.Assignments
+@using EKvarovi.Shared.Dtos.Locations
+@using EKvarovi.Shared.Enums
+@inject ApiClient Api
+@inject JwtAuthStateProvider AuthState
+@inject NavigationManager Navigation
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<PageTitle>Radni nalozi</PageTitle>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-4">
+    <MudText Typo="Typo.h4">Radni nalozi</MudText>
+    <MudButton Variant="Variant.Filled"
+               Color="Color.Primary"
+               StartIcon="@Icons.Material.Filled.PersonAdd"
+               OnClick="OpenAssignDialogAsync">
+        Nova dodjela
+    </MudButton>
+</MudStack>
+
+@if (!string.IsNullOrEmpty(_error))
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" Dense="true">@_error</MudAlert>
+}
+
+<FilterBar OnReset="ResetFiltersAsync">
+    <MudTextField @bind-Value="_filter.Search"
+                  Label="Pretraga"
+                  Placeholder="Broj ili naslov prijave…"
+                  Adornment="Adornment.Start"
+                  AdornmentIcon="@Icons.Material.Filled.Search"
+                  Immediate="true"
+                  Style="min-width: 220px;" />
+    <MudSelect T="int?" @bind-Value="_filter.TechnicianUserId" Label="Izvršitelj" Clearable="true" Style="min-width: 200px;">
+        @foreach (var tech in _technicians)
+        {
+            <MudSelectItem T="int?" Value="@tech.Id">@tech.Name</MudSelectItem>
+        }
+    </MudSelect>
+    <MudSelect T="string?" @bind-Value="_activeFilter" Label="Aktivnost" Clearable="true" Style="min-width: 160px;">
+        <MudSelectItem T="string?" Value="@("active")">Aktivni</MudSelectItem>
+        <MudSelectItem T="string?" Value="@("inactive")">Neaktivni</MudSelectItem>
+    </MudSelect>
+    <MudSelect T="int?" @bind-Value="_filter.LocationId" Label="Lokacija" Clearable="true" Style="min-width: 200px;">
+        @foreach (var loc in _locations)
+        {
+            <MudSelectItem T="int?" Value="@loc.Id">@loc.Name</MudSelectItem>
+        }
+    </MudSelect>
+    <MudDatePicker @bind-Date="_assignedFrom" Label="Dodijeljeno od" Clearable="true" Style="min-width: 170px;" />
+    <MudDatePicker @bind-Date="_assignedTo" Label="Dodijeljeno do" Clearable="true" Style="min-width: 170px;" />
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ApplyFiltersAsync">
+        Primijeni
+    </MudButton>
+</FilterBar>
+
+<MudTable T="AssignmentListDto"
+          @ref="_table"
+          ServerData="LoadAsync"
+          Hover="true"
+          Dense="true"
+          Loading="_loading">
+    <HeaderContent>
+        <MudTh><MudTableSortLabel T="AssignmentListDto" SortLabel="reportNumber">Broj prijave</MudTableSortLabel></MudTh>
+        <MudTh>Naslov</MudTh>
+        <MudTh><MudTableSortLabel T="AssignmentListDto" SortLabel="location">Lokacija</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel T="AssignmentListDto" SortLabel="priority">Prioritet</MudTableSortLabel></MudTh>
+        <MudTh>Izvršitelj</MudTh>
+        <MudTh><MudTableSortLabel T="AssignmentListDto" SortLabel="assignedAt">Dodijeljeno</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel T="AssignmentListDto" SortLabel="isActive">Aktivnost</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel T="AssignmentListDto" SortLabel="status">Status prijave</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel T="AssignmentListDto" SortLabel="dueDate">Rok</MudTableSortLabel></MudTh>
+        <MudTh>Intervencije</MudTh>
+        <MudTh></MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Broj prijave">
+            <MudLink Href="@($"/fault-reports/{context.FaultReportId}")">@context.ReportNumber</MudLink>
+        </MudTd>
+        <MudTd DataLabel="Naslov">@context.Title</MudTd>
+        <MudTd DataLabel="Lokacija">@context.LocationName</MudTd>
+        <MudTd DataLabel="Prioritet">
+            <PriorityBadge Name="@context.PriorityName" Color="@context.PriorityColor" />
+        </MudTd>
+        <MudTd DataLabel="Izvršitelj">@context.TechnicianName</MudTd>
+        <MudTd DataLabel="Dodijeljeno">@context.AssignedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</MudTd>
+        <MudTd DataLabel="Aktivnost">
+            @if (context.IsActive)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Success">Aktivan</MudChip>
+            }
+            else
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Default">Neaktivan</MudChip>
+            }
+        </MudTd>
+        <MudTd DataLabel="Status prijave">
+            <StatusBadge Name="@context.StatusName" />
+        </MudTd>
+        <MudTd DataLabel="Rok">
+            @if (context.DueDate.HasValue)
+            {
+                <span class="@(context.IsOverdue ? "text-danger fw-bold" : "")">
+                    @context.DueDate.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm")
+                </span>
+            }
+            else
+            {
+                <span>—</span>
+            }
+        </MudTd>
+        <MudTd DataLabel="Intervencije">@context.InterventionCount</MudTd>
+        <MudTd DataLabel="Radnje">
+            @if (context.IsActive && context.StatusName != "Zatvoreno")
+            {
+                <MudButton Variant="Variant.Text"
+                           Color="Color.Primary"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.SwapHoriz"
+                           OnClick="() => OpenReassignDialogAsync(context)">
+                    Re-dodijeli
+                </MudButton>
+            }
+        </MudTd>
+    </RowTemplate>
+    <NoRecordsContent>
+        <MudText Typo="Typo.body2" Class="pa-4 mud-text-secondary">Nema naloga za odabrane filtere.</MudText>
+    </NoRecordsContent>
+    <PagerContent>
+        <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+    </PagerContent>
+</MudTable>
+
+@code {
+    private MudTable<AssignmentListDto>? _table;
+    private AssignmentFilterDto _filter = new();
+    private readonly List<LocationListDto> _locations = [];
+    private readonly List<LookupDto> _technicians = [];
+    private DateTime? _assignedFrom;
+    private DateTime? _assignedTo;
+    private string? _activeFilter;
+    private bool _loading;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        if (state.User.Identity?.IsAuthenticated != true)
+        {
+            Navigation.NavigateTo("/login");
+            return;
+        }
+
+        if (!state.User.IsInRole(Roles.Admin) && !state.User.IsInRole(Roles.Manager))
+        {
+            _error = "Ova stranica je dostupna samo administratorima i upraviteljima.";
+            return;
+        }
+
+        try
+        {
+            var locations = await Api.GetLocationsAsync(new LocationFilterDto
+            {
+                Page = 1,
+                PageSize = 100,
+                IsActive = true,
+                SortBy = "name",
+                SortDir = "asc"
+            });
+            _locations.AddRange(locations.Items);
+            _technicians.AddRange(await Api.GetTechniciansAsync());
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task<TableData<AssignmentListDto>> LoadAsync(TableState state, CancellationToken ct)
+    {
+        _loading = true;
+        _error = null;
+
+        try
+        {
+            SyncFilters();
+
+            _filter.Page = state.Page + 1;
+            _filter.PageSize = state.PageSize;
+            _filter.SortBy = state.SortLabel;
+            _filter.SortDir = state.SortDirection == SortDirection.Ascending ? "asc" : "desc";
+
+            var result = await Api.GetAssignmentsAsync(_filter, ct);
+            return new TableData<AssignmentListDto>
+            {
+                Items = result.Items,
+                TotalItems = result.TotalCount
+            };
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+            return new TableData<AssignmentListDto>
+            {
+                Items = [],
+                TotalItems = 0
+            };
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void SyncFilters()
+    {
+        _filter.AssignedFrom = _assignedFrom?.Date;
+        _filter.AssignedTo = _assignedTo?.Date.AddDays(1).AddTicks(-1);
+        _filter.IsActive = _activeFilter switch
+        {
+            "active" => true,
+            "inactive" => false,
+            _ => null
+        };
+    }
+
+    private async Task ApplyFiltersAsync()
+    {
+        _filter.Page = 1;
+        if (_table is not null)
+            await _table.ReloadServerData();
+    }
+
+    private async Task ResetFiltersAsync()
+    {
+        _filter = new AssignmentFilterDto();
+        _assignedFrom = null;
+        _assignedTo = null;
+        _activeFilter = null;
+
+        if (_table is not null)
+            await _table.ReloadServerData();
+    }
+
+    private async Task OpenAssignDialogAsync()
+    {
+        var parameters = new DialogParameters<AssignDialog>
+        {
+            { d => d.RequireFaultReportSelection, true }
+        };
+
+        var dialog = await DialogService.ShowAsync<AssignDialog>(null, parameters, DialogOptions());
+        if (await DialogSucceededAsync(dialog))
+        {
+            Snackbar.Add("Prijava dodijeljena.", Severity.Success);
+            if (_table is not null)
+                await _table.ReloadServerData();
+        }
+    }
+
+    private async Task OpenReassignDialogAsync(AssignmentListDto assignment)
+    {
+        var parameters = new DialogParameters<ReassignDialog>
+        {
+            { d => d.AssignmentId, assignment.Id },
+            { d => d.ReportNumber, assignment.ReportNumber },
+            { d => d.CurrentTechnicianName, assignment.TechnicianName }
+        };
+
+        var dialog = await DialogService.ShowAsync<ReassignDialog>(null, parameters, DialogOptions());
+        if (await DialogSucceededAsync(dialog))
+        {
+            Snackbar.Add("Prijava re-dodijeljena.", Severity.Success);
+            if (_table is not null)
+                await _table.ReloadServerData();
+        }
+    }
+
+    private static DialogOptions DialogOptions() => new()
+    {
+        CloseButton = true,
+        MaxWidth = MaxWidth.Small,
+        FullWidth = true
+    };
+
+    private static async Task<bool> DialogSucceededAsync(IDialogReference dialog)
+    {
+        var result = await dialog.Result;
+        return result is not null && !result.Canceled;
+    }
+}

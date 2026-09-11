@@ -102,6 +102,33 @@ public sealed class LookupService(AppDbContext db, ICurrentUserService currentUs
             })
             .ToListAsync(ct);
 
+    public async Task<List<LookupDto>> GetTechniciansAsync(string? search = null, CancellationToken ct = default)
+    {
+        var query = db.Users
+            .AsNoTracking()
+            .Where(u => u.IsActive && u.UserRoles.Any(ur => ur.Role.Code == Roles.Technician));
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var term = $"%{search.Trim()}%";
+            query = query.Where(u =>
+                EF.Functions.ILike(u.FirstName, term) ||
+                EF.Functions.ILike(u.LastName, term) ||
+                EF.Functions.ILike(u.Email, term));
+        }
+
+        return await query
+            .OrderBy(u => u.LastName).ThenBy(u => u.FirstName)
+            .Select(u => new LookupDto
+            {
+                Id = u.Id,
+                Name = u.FirstName + " " + u.LastName,
+                IsActive = u.IsActive,
+                SortOrder = u.Id
+            })
+            .ToListAsync(ct);
+    }
+
     public async Task<AllLookupsDto> GetAllAsync(CancellationToken ct = default)
     {
         return new AllLookupsDto

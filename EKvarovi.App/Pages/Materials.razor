@@ -1,0 +1,265 @@
+@page "/materials"
+@using EKvarovi.Shared.Common
+@using EKvarovi.Shared.Dtos.Materials
+@using EKvarovi.Shared.Enums
+@inject ApiClient Api
+@inject LookupCache Lookups
+@inject JwtAuthStateProvider AuthState
+@inject NavigationManager Navigation
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<PageTitle>Materijali</PageTitle>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-4" Wrap="Wrap.Wrap">
+    <MudText Typo="Typo.h4">Katalog materijala</MudText>
+    @if (_isAdmin)
+    {
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Add"
+                   OnClick="OpenCreateDialogAsync">
+            Novi materijal
+        </MudButton>
+    }
+</MudStack>
+
+@if (!string.IsNullOrEmpty(_error))
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" Dense="true">@_error</MudAlert>
+}
+
+<FilterBar OnReset="ResetFiltersAsync">
+    <MudTextField @bind-Value="_filter.Search"
+                  Label="Pretraga"
+                  Placeholder="Šifra ili naziv…"
+                  Adornment="Adornment.Start"
+                  AdornmentIcon="@Icons.Material.Filled.Search"
+                  Immediate="true"
+                  Style="min-width: 220px;" />
+    <MudSelect T="int?" @bind-Value="_filter.MaterialUnitId" Label="Jedinica" Clearable="true" Style="min-width: 180px;">
+        @foreach (var unit in Lookups.MaterialUnits)
+        {
+            <MudSelectItem T="int?" Value="@unit.Id">@unit.Name</MudSelectItem>
+        }
+    </MudSelect>
+    <MudSelect T="string?" @bind-Value="_activeFilter" Label="Aktivnost" Clearable="true" Style="min-width: 160px;">
+        <MudSelectItem T="string?" Value="@("true")">Aktivni</MudSelectItem>
+        <MudSelectItem T="string?" Value="@("false")">Neaktivni</MudSelectItem>
+    </MudSelect>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ApplyFiltersAsync">
+        Primijeni
+    </MudButton>
+</FilterBar>
+
+<MudTable T="MaterialListDto"
+          @ref="_table"
+          ServerData="LoadAsync"
+          Hover="true"
+          Dense="true"
+          Loading="_loading">
+    <HeaderContent>
+        <MudTh><MudTableSortLabel T="MaterialListDto" SortLabel="code">Šifra</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel T="MaterialListDto" SortLabel="name">Naziv</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel T="MaterialListDto" SortLabel="materialUnit">Jedinica</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel T="MaterialListDto" SortLabel="unitPrice">Cijena</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel T="MaterialListDto" SortLabel="isActive">Status</MudTableSortLabel></MudTh>
+        @if (_isAdmin)
+        {
+            <MudTh>Akcije</MudTh>
+        }
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Šifra">@context.Code</MudTd>
+        <MudTd DataLabel="Naziv">@context.Name</MudTd>
+        <MudTd DataLabel="Jedinica">@context.MaterialUnitName</MudTd>
+        <MudTd DataLabel="Cijena">@context.UnitPrice.ToString("N2") €</MudTd>
+        <MudTd DataLabel="Status">
+            @if (context.IsActive)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Success">Aktivan</MudChip>
+            }
+            else
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Default">Neaktivan</MudChip>
+            }
+        </MudTd>
+        @if (_isAdmin)
+        {
+            <MudTd DataLabel="Akcije">
+                <MudIconButton Icon="@Icons.Material.Filled.Edit"
+                               Size="Size.Small"
+                               aria-label="Uredi"
+                               OnClick="@(() => OpenEditDialogAsync(context))" />
+                <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                               Size="Size.Small"
+                               Color="Color.Error"
+                               aria-label="Obriši"
+                               OnClick="@(() => ConfirmDeleteAsync(context))" />
+            </MudTd>
+        }
+    </RowTemplate>
+    <NoRecordsContent>
+        <MudText Typo="Typo.body2" Class="pa-4 mud-text-secondary">Nema materijala za odabrane filtere.</MudText>
+    </NoRecordsContent>
+    <PagerContent>
+        <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+    </PagerContent>
+</MudTable>
+
+@code {
+    private MudTable<MaterialListDto>? _table;
+    private MaterialFilterDto _filter = new();
+    private string? _activeFilter;
+    private bool _loading;
+    private bool _isAdmin;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        if (state.User.Identity?.IsAuthenticated != true)
+        {
+            Navigation.NavigateTo("/login");
+            return;
+        }
+
+        _isAdmin = state.User.IsInRole(Roles.Admin);
+        await Lookups.EnsureLoadedAsync();
+    }
+
+    private async Task<TableData<MaterialListDto>> LoadAsync(TableState state, CancellationToken ct)
+    {
+        _loading = true;
+        _error = null;
+
+        try
+        {
+            SyncActiveFilter();
+
+            _filter.Page = state.Page + 1;
+            _filter.PageSize = state.PageSize;
+            _filter.SortBy = state.SortLabel;
+            _filter.SortDir = state.SortDirection == SortDirection.Ascending ? "asc" : "desc";
+
+            var result = await Api.GetMaterialsAsync(_filter, ct);
+            return new TableData<MaterialListDto>
+            {
+                Items = result.Items,
+                TotalItems = result.TotalCount
+            };
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+            return new TableData<MaterialListDto>
+            {
+                Items = [],
+                TotalItems = 0
+            };
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void SyncActiveFilter()
+    {
+        _filter.IsActive = _activeFilter switch
+        {
+            "true" => true,
+            "false" => false,
+            _ => null
+        };
+    }
+
+    private async Task ApplyFiltersAsync()
+    {
+        _filter.Page = 1;
+        if (_table is not null)
+            await _table.ReloadServerData();
+    }
+
+    private async Task ResetFiltersAsync()
+    {
+        _filter = new MaterialFilterDto();
+        _activeFilter = null;
+
+        if (_table is not null)
+            await _table.ReloadServerData();
+    }
+
+    private async Task OpenCreateDialogAsync()
+    {
+        var dialog = await DialogService.ShowAsync<MaterialDialog>(
+            null,
+            new DialogParameters<MaterialDialog>(),
+            DialogOptions());
+
+        if (await DialogSucceededAsync(dialog))
+        {
+            Snackbar.Add("Materijal kreiran.", Severity.Success);
+            if (_table is not null)
+                await _table.ReloadServerData();
+        }
+    }
+
+    private async Task OpenEditDialogAsync(MaterialListDto material)
+    {
+        var parameters = new DialogParameters<MaterialDialog>
+        {
+            { d => d.Material, material }
+        };
+
+        var dialog = await DialogService.ShowAsync<MaterialDialog>(null, parameters, DialogOptions());
+
+        if (await DialogSucceededAsync(dialog))
+        {
+            Snackbar.Add("Materijal ažuriran.", Severity.Success);
+            if (_table is not null)
+                await _table.ReloadServerData();
+        }
+    }
+
+    private async Task ConfirmDeleteAsync(MaterialListDto material)
+    {
+        var parameters = new DialogParameters<ConfirmDialog>
+        {
+            { d => d.Title, "Brisanje materijala" },
+            { d => d.Message, $"Obrisati materijal \"{material.Code} — {material.Name}\"?" },
+            { d => d.ConfirmText, "Obriši" },
+            { d => d.ConfirmColor, Color.Error }
+        };
+
+        var dialog = await DialogService.ShowAsync<ConfirmDialog>(null, parameters, DialogOptions());
+        var result = await dialog.Result;
+        if (result is null || result.Canceled)
+            return;
+
+        try
+        {
+            await Api.DeleteMaterialAsync(material.Id);
+            Snackbar.Add("Materijal obrisan.", Severity.Success);
+            if (_table is not null)
+                await _table.ReloadServerData();
+        }
+        catch (ApiClientException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+    }
+
+    private static DialogOptions DialogOptions() => new()
+    {
+        CloseButton = true,
+        MaxWidth = MaxWidth.Small,
+        FullWidth = true
+    };
+
+    private static async Task<bool> DialogSucceededAsync(IDialogReference dialog)
+    {
+        var result = await dialog.Result;
+        return result is not null && !result.Canceled;
+    }
+}

@@ -8,6 +8,8 @@ public class AttachmentConfiguration : IEntityTypeConfiguration<Attachment>
 {
     public void Configure(EntityTypeBuilder<Attachment> builder)
     {
+        builder.HasQueryFilter(a => !a.IsDeleted);
+
         builder.Property(x => x.OriginalFileName).HasMaxLength(255).IsRequired();
         builder.Property(x => x.StoredFileName).HasMaxLength(100).IsRequired();
         builder.Property(x => x.RelativePath).HasMaxLength(400).IsRequired();

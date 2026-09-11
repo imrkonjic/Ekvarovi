@@ -1,0 +1,127 @@
+@using EKvarovi.Shared.Common
+@using EKvarovi.Shared.Dtos.Assignments
+@inject ApiClient Api
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Re-dodjela prijave @ReportNumber</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3" Dense="true">@_error</MudAlert>
+        }
+        <MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
+            Trenutni izvršitelj: <b>@CurrentTechnicianName</b>
+        </MudText>
+        <MudSelect T="int?"
+                   @bind-Value="_technicianId"
+                   Label="Novi izvršitelj"
+                   Required="true"
+                   RequiredError="Novi izvršitelj je obavezan."
+                   Class="mb-3">
+            @foreach (var tech in _technicians)
+            {
+                <MudSelectItem T="int?" Value="@tech.Id">@tech.Name</MudSelectItem>
+            }
+        </MudSelect>
+        <MudTextField @bind-Value="_reason"
+                      Label="Razlog re-dodjele"
+                      Required="true"
+                      Counter="500"
+                      MaxLength="500"
+                      Immediate="true"
+                      Validation="@(new Func<string, IEnumerable<string>>(ValidateReason))"
+                      Class="mb-3" />
+        <MudTextField @bind-Value="_note"
+                      Label="Napomena"
+                      Lines="3"
+                      MaxLength="1000"
+                      Counter="1000" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Odustani</MudButton>
+        <MudButton Color="Color.Primary"
+                   Variant="Variant.Filled"
+                   Disabled="_busy || !_technicianId.HasValue || string.IsNullOrWhiteSpace(_reason)"
+                   OnClick="SubmitAsync">
+            @if (_busy)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Re-dodijeli
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter]
+    public int AssignmentId { get; set; }
+
+    [Parameter]
+    public string ReportNumber { get; set; } = string.Empty;
+
+    [Parameter]
+    public string CurrentTechnicianName { get; set; } = string.Empty;
+
+    private readonly List<LookupDto> _technicians = [];
+    private int? _technicianId;
+    private string _reason = string.Empty;
+    private string? _note;
+    private bool _busy;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _technicians.AddRange(await Api.GetTechniciansAsync());
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private static IEnumerable<string> ValidateReason(string reason)
+    {
+        var trimmed = reason?.Trim() ?? string.Empty;
+        if (trimmed.Length == 0)
+            yield return "Razlog je obavezan.";
+        else if (trimmed.Length < 5)
+            yield return "Razlog mora imati najmanje 5 znakova.";
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (!_technicianId.HasValue || string.IsNullOrWhiteSpace(_reason))
+            return;
+
+        _busy = true;
+        _error = null;
+
+        try
+        {
+            await Api.ReassignAsync(AssignmentId, new ReassignDto
+            {
+                NewTechnicianUserId = _technicianId.Value,
+                Reason = _reason.Trim(),
+                Note = string.IsNullOrWhiteSpace(_note) ? null : _note.Trim()
+            });
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Close(DialogResult.Cancel());
+}

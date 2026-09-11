@@ -1,7 +1,448 @@
 ﻿@page "/"
+@using EKvarovi.Shared.Common
+@using EKvarovi.Shared.Dtos.Assignments
+@using EKvarovi.Shared.Dtos.Dashboard
+@using EKvarovi.Shared.Dtos.FaultReports
+@using EKvarovi.Shared.Dtos.Interventions
+@using EKvarovi.Shared.Enums
+@inject ApiClient Api
+@inject LookupCache Lookups
+@inject JwtAuthStateProvider AuthState
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
 
-<PageTitle>Home</PageTitle>
+<PageTitle>Početna</PageTitle>
 
-<h1>Hello, world!</h1>
+<MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-4" Wrap="Wrap.Wrap">
+    <MudText Typo="Typo.h4">Početna</MudText>
+    @if (_initialized && (_showMetrics || _showReporterSummary))
+    {
+        <MudButton Variant="Variant.Outlined"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Refresh"
+                   Disabled="_loading"
+                   OnClick="RefreshAsync">
+            Osvježi
+        </MudButton>
+    }
+    else if (_initialized && _showTechnicianCards)
+    {
+        <MudButton Variant="Variant.Outlined"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Refresh"
+                   Disabled="_loading"
+                   OnClick="LoadTechnicianCardsAsync">
+            Osvježi
+        </MudButton>
+    }
+</MudStack>
 
-Welcome to your new app.
+@if (!string.IsNullOrEmpty(_error))
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" Dense="true">@_error</MudAlert>
+}
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Class="mb-4" />
+}
+
+@if (_initialized)
+{
+    @if (_showMetrics || _showReporterSummary)
+    {
+        <MudPaper Class="pa-4 mb-4" Elevation="1">
+            <MudStack Spacing="2">
+                <MudText Typo="Typo.subtitle1">Razdoblje</MudText>
+                <MudStack Row="true" Wrap="Wrap.Wrap" AlignItems="AlignItems.End" Spacing="2">
+                    <MudButtonGroup Variant="Variant.Outlined" Color="Color.Primary">
+                        <MudButton Variant="@GetPresetVariant(7)" OnClick="() => SetPresetAsync(7)">7 dana</MudButton>
+                        <MudButton Variant="@GetPresetVariant(30)" OnClick="() => SetPresetAsync(30)">30 dana</MudButton>
+                        <MudButton Variant="@GetPresetVariant(365)" OnClick="() => SetPresetAsync(365)">Godina</MudButton>
+                        <MudButton Variant="@GetPresetVariant(null)" OnClick="EnableCustomPeriodAsync">Prilagođeno</MudButton>
+                    </MudButtonGroup>
+                    @if (_customPeriod)
+                    {
+                        <MudDatePicker @bind-Date="_customFrom" Label="Od" Style="max-width: 180px;" />
+                        <MudDatePicker @bind-Date="_customTo" Label="Do" Style="max-width: 180px;" />
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ApplyCustomPeriodAsync">
+                            Primijeni
+                        </MudButton>
+                    }
+                </MudStack>
+            </MudStack>
+        </MudPaper>
+    }
+
+    @if (_showMetrics && _dashboard is not null)
+    {
+        <DashboardMetrics Data="_dashboard" />
+    }
+    else if (_showReporterSummary && _dashboard is not null)
+    {
+        <MudText Typo="Typo.body2" Class="mb-3 mud-text-secondary">
+            @(_dashboard.ScopeLabel) · @FormatPeriod(_dashboard.PeriodFrom, _dashboard.PeriodTo)
+        </MudText>
+        <DashboardMetrics Data="_dashboard" Compact="true" />
+
+        @if (_recentReports.Count > 0)
+        {
+            <MudPaper Class="pa-4 mt-4" Elevation="1">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+                    <MudText Typo="Typo.h6">Nedavne prijave</MudText>
+                    <MudButton Variant="Variant.Text" Href="/my-reports">Prikaži sve</MudButton>
+                </MudStack>
+                <MudSimpleTable Dense="true" Hover="true">
+                    <thead>
+                        <tr>
+                            <th>Broj</th>
+                            <th>Naslov</th>
+                            <th>Status</th>
+                            <th>Prijavljeno</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var report in _recentReports)
+                        {
+                            <tr>
+                                <td>
+                                    <MudLink Href="@($"/fault-reports/{report.Id}")">@report.ReportNumber</MudLink>
+                                </td>
+                                <td>@report.Title</td>
+                                <td><StatusBadge Name="@report.StatusName" /></td>
+                                <td>@report.ReportedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </MudSimpleTable>
+            </MudPaper>
+        }
+    }
+    else if (_showTechnicianCards)
+    {
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+            <MudText Typo="Typo.h6">Aktivni nalozi</MudText>
+            <MudButton Variant="Variant.Text" Href="/my-assignments">Prikaži sve</MudButton>
+        </MudStack>
+
+        @if (!_loading && _assignments.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Class="mud-text-secondary mb-4">Nemate aktivnih radnih naloga.</MudText>
+        }
+        else
+        {
+            <MudGrid Spacing="3" Class="mb-4">
+                @foreach (var assignment in _assignments)
+                {
+                    <MudItem xs="12" sm="6" lg="4">
+                        <MudCard Elevation="2" Class="h-100">
+                            <MudCardHeader>
+                                <CardHeaderContent>
+                                    <MudText Typo="Typo.h6">@assignment.ReportNumber</MudText>
+                                    <MudText Typo="Typo.body2" Class="mud-text-secondary">@assignment.Title</MudText>
+                                </CardHeaderContent>
+                                <CardHeaderActions>
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Success">Aktivan</MudChip>
+                                </CardHeaderActions>
+                            </MudCardHeader>
+                            <MudCardContent>
+                                <MudStack Spacing="1">
+                                    <MudText Typo="Typo.body2"><b>Lokacija:</b> @assignment.LocationName</MudText>
+                                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                                        <PriorityBadge Name="@assignment.PriorityName" Color="@assignment.PriorityColor" />
+                                        <StatusBadge Name="@assignment.StatusName" />
+                                    </MudStack>
+                                    <MudText Typo="Typo.body2">
+                                        <b>Rok:</b>
+                                        @if (assignment.DueDate.HasValue)
+                                        {
+                                            <span class="@(assignment.IsOverdue ? "text-danger fw-bold" : "")">
+                                                @assignment.DueDate.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm")
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <span>—</span>
+                                        }
+                                    </MudText>
+                                </MudStack>
+                            </MudCardContent>
+                            <MudCardActions>
+                                @if (CanStartIntervention(assignment))
+                                {
+                                    <MudButton Variant="Variant.Filled"
+                                               Color="Color.Primary"
+                                               Size="Size.Small"
+                                               StartIcon="@Icons.Material.Filled.PlayArrow"
+                                               Disabled="_startingId == assignment.Id"
+                                               OnClick="() => StartInterventionAsync(assignment)">
+                                        Pokreni intervenciju
+                                    </MudButton>
+                                }
+                                <MudButton Variant="Variant.Text"
+                                           Size="Size.Small"
+                                           Href="@($"/fault-reports/{assignment.FaultReportId}")">
+                                    Detalji
+                                </MudButton>
+                            </MudCardActions>
+                        </MudCard>
+                    </MudItem>
+                }
+            </MudGrid>
+        }
+    }
+
+    <MudPaper Class="pa-4 mt-4" Elevation="1">
+        <MudText Typo="Typo.h6" Class="mb-3">Brze poveznice</MudText>
+        <MudStack Row="true" Wrap="Wrap.Wrap" Spacing="2">
+            @if (_isAdminOrManager)
+            {
+                <MudButton Variant="Variant.Outlined" Href="/fault-reports" StartIcon="@Icons.Material.Filled.List">Sve prijave</MudButton>
+                <MudButton Variant="Variant.Outlined" Href="/assignments" StartIcon="@Icons.Material.Filled.Assignment">Radni nalozi</MudButton>
+                <MudButton Variant="Variant.Outlined" Href="/interventions" StartIcon="@Icons.Material.Filled.Engineering">Intervencije</MudButton>
+            }
+            @if (_isTechnician)
+            {
+                <MudButton Variant="Variant.Outlined" Href="/my-assignments" StartIcon="@Icons.Material.Filled.Build">Moji nalozi</MudButton>
+            }
+            @if (_canCreateReport)
+            {
+                <MudButton Variant="Variant.Outlined" Href="/fault-reports/new" StartIcon="@Icons.Material.Filled.AddCircle">Nova prijava</MudButton>
+            }
+            <MudButton Variant="Variant.Outlined" Href="/my-reports" StartIcon="@Icons.Material.Filled.Description">Moje prijave</MudButton>
+            <MudButton Variant="Variant.Outlined" Href="/locations" StartIcon="@Icons.Material.Filled.Place">Lokacije</MudButton>
+            <MudButton Variant="Variant.Outlined" Href="/materials" StartIcon="@Icons.Material.Filled.Inventory">Materijali</MudButton>
+            @if (_isAdmin)
+            {
+                <MudButton Variant="Variant.Outlined" Href="/users" StartIcon="@Icons.Material.Filled.People">Korisnici</MudButton>
+            }
+        </MudStack>
+    </MudPaper>
+}
+
+@code {
+    private const int TechnicianCardLimit = 6;
+
+    private bool _initialized;
+    private bool _loading;
+    private string? _error;
+
+    private bool _isAdmin;
+    private bool _isAdminOrManager;
+    private bool _isTechnician;
+    private bool _canCreateReport;
+
+    private bool _showMetrics;
+    private bool _showTechnicianCards;
+    private bool _showReporterSummary;
+
+    private int? _presetDays = 30;
+    private bool _customPeriod;
+    private DateTime? _customFrom = DateTime.Today.AddDays(-30);
+    private DateTime? _customTo = DateTime.Today;
+
+    private DashboardDto? _dashboard;
+    private readonly List<AssignmentListDto> _assignments = [];
+    private readonly List<FaultReportListDto> _recentReports = [];
+    private int? _startingId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        if (state.User.Identity?.IsAuthenticated != true)
+        {
+            Navigation.NavigateTo("/login");
+            return;
+        }
+
+        _isAdmin = state.User.IsInRole(Roles.Admin);
+        _isAdminOrManager = _isAdmin || state.User.IsInRole(Roles.Manager);
+        _isTechnician = state.User.IsInRole(Roles.Technician);
+        _canCreateReport = state.User.IsInRole(Roles.Reporter)
+                           || state.User.IsInRole(Roles.Manager)
+                           || _isAdmin;
+
+        _showMetrics = _isAdminOrManager;
+        _showTechnicianCards = _isTechnician && !_isAdminOrManager;
+        _showReporterSummary = !_showMetrics && !_showTechnicianCards;
+
+        await Lookups.EnsureLoadedAsync();
+
+        if (_showMetrics || _showReporterSummary)
+            await LoadDashboardAsync();
+        else if (_showTechnicianCards)
+            await LoadTechnicianCardsAsync();
+
+        _initialized = true;
+    }
+
+    private Variant GetPresetVariant(int? days)
+    {
+        if (_customPeriod)
+            return days is null ? Variant.Filled : Variant.Outlined;
+
+        return _presetDays == days ? Variant.Filled : Variant.Outlined;
+    }
+
+    private async Task SetPresetAsync(int days)
+    {
+        _customPeriod = false;
+        _presetDays = days;
+        await LoadDashboardAsync();
+    }
+
+    private Task EnableCustomPeriodAsync()
+    {
+        _customPeriod = true;
+        _presetDays = null;
+        return Task.CompletedTask;
+    }
+
+    private async Task ApplyCustomPeriodAsync()
+    {
+        if (_customFrom is null)
+        {
+            Snackbar.Add("Odaberite početni datum.", Severity.Warning);
+            return;
+        }
+
+        if (_customTo is null)
+            _customTo = DateTime.Today;
+
+        if (_customFrom > _customTo)
+        {
+            Snackbar.Add("Početni datum ne smije biti nakon završnog.", Severity.Warning);
+            return;
+        }
+
+        await LoadDashboardAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        if (_showMetrics || _showReporterSummary)
+            await LoadDashboardAsync();
+        else if (_showTechnicianCards)
+            await LoadTechnicianCardsAsync();
+    }
+
+    private DashboardFilterDto BuildFilter()
+    {
+        if (_customPeriod)
+        {
+            return new DashboardFilterDto
+            {
+                PeriodFrom = _customFrom?.Date,
+                PeriodTo = _customTo?.Date
+            };
+        }
+
+        if (_presetDays is int days)
+        {
+            return new DashboardFilterDto
+            {
+                PeriodFrom = DateTime.Today.AddDays(-days).Date,
+                PeriodTo = DateTime.Today.Date
+            };
+        }
+
+        return new DashboardFilterDto();
+    }
+
+    private async Task LoadDashboardAsync()
+    {
+        _loading = true;
+        _error = null;
+
+        try
+        {
+            _dashboard = await Api.GetDashboardAsync(BuildFilter());
+
+            if (_showReporterSummary)
+            {
+                var reports = await Api.GetMyFaultReportsAsync(new FaultReportFilterDto
+                {
+                    Page = 1,
+                    PageSize = 5,
+                    SortBy = "reportedAt",
+                    SortDir = "desc"
+                });
+                _recentReports.Clear();
+                _recentReports.AddRange(reports.Items);
+            }
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+            _dashboard = null;
+            _recentReports.Clear();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task LoadTechnicianCardsAsync()
+    {
+        _loading = true;
+        _error = null;
+
+        try
+        {
+            var result = await Api.GetMyAssignmentsAsync(new AssignmentFilterDto
+            {
+                Page = 1,
+                PageSize = TechnicianCardLimit,
+                OnlyActive = true,
+                SortBy = "dueDate",
+                SortDir = "asc"
+            });
+            _assignments.Clear();
+            _assignments.AddRange(result.Items);
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+            _assignments.Clear();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static bool CanStartIntervention(AssignmentListDto assignment) =>
+        assignment.IsActive
+        && assignment.StatusName is not ("Riješeno" or "Zatvoreno");
+
+    private async Task StartInterventionAsync(AssignmentListDto assignment)
+    {
+        _startingId = assignment.Id;
+        _error = null;
+
+        try
+        {
+            var intervention = await Api.CreateInterventionAsync(new InterventionCreateDto
+            {
+                WorkAssignmentId = assignment.Id
+            });
+
+            Snackbar.Add(
+                $"Intervencija #{intervention.Id} pokrenuta za prijavu {intervention.ReportNumber}.",
+                Severity.Success);
+            await LoadTechnicianCardsAsync();
+        }
+        catch (ApiClientException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _startingId = null;
+        }
+    }
+
+    private static string FormatPeriod(DateTime from, DateTime to)
+        => $"{from.ToLocalTime():dd.MM.yyyy} – {to.ToLocalTime():dd.MM.yyyy}";
+}

@@ -14,8 +14,6 @@ public static class DemoDataSeeder
         if (!configuration.GetValue<bool>("Seed:Enabled"))
             return;
 
-        await db.Database.MigrateAsync(ct);
-
         if (!configuration.GetValue<bool>("Seed:DemoData"))
             return;
 

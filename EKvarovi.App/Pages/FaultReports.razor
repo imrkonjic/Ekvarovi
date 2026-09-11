@@ -1,0 +1,224 @@
+@page "/fault-reports"
+@using EKvarovi.Shared.Common
+@using EKvarovi.Shared.Dtos.FaultReports
+@using EKvarovi.Shared.Dtos.Locations
+@using EKvarovi.Shared.Enums
+@inject ApiClient Api
+@inject LookupCache Lookups
+@inject JwtAuthStateProvider AuthState
+@inject NavigationManager Navigation
+
+<PageTitle>Sve prijave</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-4">Sve prijave</MudText>
+
+@if (!string.IsNullOrEmpty(_error))
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" Dense="true">@_error</MudAlert>
+}
+
+<FilterBar OnReset="ResetFiltersAsync">
+    <MudTextField @bind-Value="_filter.Search"
+                  Label="Pretraga"
+                  Placeholder="Broj, naslov, opis…"
+                  Adornment="Adornment.Start"
+                  AdornmentIcon="@Icons.Material.Filled.Search"
+                  Immediate="true"
+                  Style="min-width: 220px;" />
+    <MudSelect T="int?" @bind-Value="_filter.LocationId" Label="Lokacija" Clearable="true" Style="min-width: 200px;">
+        @foreach (var loc in _locations)
+        {
+            <MudSelectItem T="int?" Value="@loc.Id">@loc.Name</MudSelectItem>
+        }
+    </MudSelect>
+    <MudSelect T="int?" @bind-Value="_filter.FaultTypeId" Label="Vrsta" Clearable="true" Style="min-width: 180px;">
+        @foreach (var type in Lookups.FaultTypes)
+        {
+            <MudSelectItem T="int?" Value="@type.Id">@type.Name</MudSelectItem>
+        }
+    </MudSelect>
+    <MudSelect T="int?" @bind-Value="_filter.FaultPriorityId" Label="Prioritet" Clearable="true" Style="min-width: 160px;">
+        @foreach (var prio in Lookups.Priorities)
+        {
+            <MudSelectItem T="int?" Value="@prio.Id">@prio.Name</MudSelectItem>
+        }
+    </MudSelect>
+    <MudSelect T="int?" @bind-Value="_filter.FaultStatusId" Label="Status" Clearable="true" Style="min-width: 160px;">
+        @foreach (var status in Lookups.FaultStatuses)
+        {
+            <MudSelectItem T="int?" Value="@status.Id">@status.Name</MudSelectItem>
+        }
+    </MudSelect>
+    <MudSelect T="int?" @bind-Value="_filter.TechnicianUserId" Label="Izvršitelj" Clearable="true" Style="min-width: 200px;">
+        @foreach (var tech in _technicians)
+        {
+            <MudSelectItem T="int?" Value="@tech.Id">@tech.Name</MudSelectItem>
+        }
+    </MudSelect>
+    <MudDatePicker @bind-Date="_reportedFrom" Label="Prijavljeno od" Clearable="true" Style="min-width: 170px;" />
+    <MudDatePicker @bind-Date="_reportedTo" Label="Prijavljeno do" Clearable="true" Style="min-width: 170px;" />
+    <MudCheckBox @bind-Value="_onlyOverdue" Label="Samo kasne" Color="Color.Warning" />
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ApplyFiltersAsync">
+        Primijeni
+    </MudButton>
+</FilterBar>
+
+<MudTable T="FaultReportListDto"
+          @ref="_table"
+          ServerData="LoadAsync"
+          Hover="true"
+          Dense="true"
+          Loading="_loading">
+    <HeaderContent>
+        <MudTh><MudTableSortLabel T="FaultReportListDto" SortLabel="reportNumber">Broj</MudTableSortLabel></MudTh>
+        <MudTh>Naslov</MudTh>
+        <MudTh><MudTableSortLabel T="FaultReportListDto" SortLabel="location">Lokacija</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel T="FaultReportListDto" SortLabel="priority">Prioritet</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel T="FaultReportListDto" SortLabel="status">Status</MudTableSortLabel></MudTh>
+        <MudTh>Izvršitelj</MudTh>
+        <MudTh><MudTableSortLabel T="FaultReportListDto" SortLabel="reportedAt">Prijavljeno</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel T="FaultReportListDto" SortLabel="dueDate">Rok</MudTableSortLabel></MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Broj">
+            <MudLink Href="@($"/fault-reports/{context.Id}")">@context.ReportNumber</MudLink>
+        </MudTd>
+        <MudTd DataLabel="Naslov">@context.Title</MudTd>
+        <MudTd DataLabel="Lokacija">@context.LocationName</MudTd>
+        <MudTd DataLabel="Prioritet">
+            <PriorityBadge Name="@context.PriorityName" Color="@context.PriorityColor" />
+        </MudTd>
+        <MudTd DataLabel="Status">
+            <StatusBadge Name="@context.StatusName" />
+        </MudTd>
+        <MudTd DataLabel="Izvršitelj">@(context.TechnicianName ?? "—")</MudTd>
+        <MudTd DataLabel="Prijavljeno">@context.ReportedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</MudTd>
+        <MudTd DataLabel="Rok">
+            @if (context.DueDate.HasValue)
+            {
+                <span class="@(context.IsOverdue ? "text-danger fw-bold" : "")">
+                    @context.DueDate.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm")
+                </span>
+            }
+            else
+            {
+                <span>—</span>
+            }
+        </MudTd>
+    </RowTemplate>
+    <NoRecordsContent>
+        <MudText Typo="Typo.body2" Class="pa-4 mud-text-secondary">Nema prijava za odabrane filtere.</MudText>
+    </NoRecordsContent>
+    <PagerContent>
+        <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+    </PagerContent>
+</MudTable>
+
+@code {
+    private MudTable<FaultReportListDto>? _table;
+    private FaultReportFilterDto _filter = new();
+    private readonly List<LocationListDto> _locations = [];
+    private readonly List<LookupDto> _technicians = [];
+    private DateTime? _reportedFrom;
+    private DateTime? _reportedTo;
+    private bool _onlyOverdue;
+    private bool _loading;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        if (state.User.Identity?.IsAuthenticated != true)
+        {
+            Navigation.NavigateTo("/login");
+            return;
+        }
+
+        if (!state.User.IsInRole(Roles.Admin) && !state.User.IsInRole(Roles.Manager))
+        {
+            _error = "Ova stranica je dostupna samo administratorima i upraviteljima.";
+            return;
+        }
+
+        await Lookups.EnsureLoadedAsync();
+
+        try
+        {
+            var locations = await Api.GetLocationsAsync(new LocationFilterDto
+            {
+                Page = 1,
+                PageSize = 100,
+                IsActive = true,
+                SortBy = "name",
+                SortDir = "asc"
+            });
+            _locations.AddRange(locations.Items);
+            _technicians.AddRange(await Api.GetTechniciansAsync());
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task<TableData<FaultReportListDto>> LoadAsync(TableState state, CancellationToken ct)
+    {
+        _loading = true;
+        _error = null;
+
+        try
+        {
+            SyncDateFilters();
+
+            _filter.Page = state.Page + 1;
+            _filter.PageSize = state.PageSize;
+            _filter.SortBy = state.SortLabel;
+            _filter.SortDir = state.SortDirection == SortDirection.Ascending ? "asc" : "desc";
+
+            var result = await Api.GetFaultReportsAsync(_filter, ct);
+            return new TableData<FaultReportListDto>
+            {
+                Items = result.Items,
+                TotalItems = result.TotalCount
+            };
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+            return new TableData<FaultReportListDto>
+            {
+                Items = [],
+                TotalItems = 0
+            };
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void SyncDateFilters()
+    {
+        _filter.ReportedFrom = _reportedFrom?.Date;
+        _filter.ReportedTo = _reportedTo?.Date.AddDays(1).AddTicks(-1);
+        _filter.OnlyOverdue = _onlyOverdue ? true : null;
+    }
+
+    private async Task ApplyFiltersAsync()
+    {
+        _filter.Page = 1;
+        if (_table is not null)
+            await _table.ReloadServerData();
+    }
+
+    private async Task ResetFiltersAsync()
+    {
+        _filter = new FaultReportFilterDto();
+        _reportedFrom = null;
+        _reportedTo = null;
+        _onlyOverdue = false;
+
+        if (_table is not null)
+            await _table.ReloadServerData();
+    }
+}

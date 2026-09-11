@@ -1,0 +1,116 @@
+@page "/my-reports"
+@using EKvarovi.Shared.Common
+@using EKvarovi.Shared.Dtos.FaultReports
+@inject ApiClient Api
+@inject JwtAuthStateProvider AuthState
+@inject NavigationManager Navigation
+
+<PageTitle>Moje prijave</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-4">Moje prijave</MudText>
+
+@if (!string.IsNullOrEmpty(_error))
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4" Dense="true">@_error</MudAlert>
+}
+
+<MudTable T="FaultReportListDto"
+          @ref="_table"
+          ServerData="LoadAsync"
+          Hover="true"
+          Dense="true"
+          Loading="_loading">
+    <HeaderContent>
+        <MudTh><MudTableSortLabel T="FaultReportListDto" SortLabel="reportNumber">Broj</MudTableSortLabel></MudTh>
+        <MudTh>Naslov</MudTh>
+        <MudTh>Lokacija</MudTh>
+        <MudTh><MudTableSortLabel T="FaultReportListDto" SortLabel="priority">Prioritet</MudTableSortLabel></MudTh>
+        <MudTh>Status</MudTh>
+        <MudTh>Izvršitelj</MudTh>
+        <MudTh><MudTableSortLabel T="FaultReportListDto" SortLabel="reportedAt">Prijavljeno</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel T="FaultReportListDto" SortLabel="dueDate">Rok</MudTableSortLabel></MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Broj">
+            <MudLink Href="@($"/fault-reports/{context.Id}")">@context.ReportNumber</MudLink>
+        </MudTd>
+        <MudTd DataLabel="Naslov">
+            <MudLink Href="@($"/fault-reports/{context.Id}")">@context.Title</MudLink>
+        </MudTd>
+        <MudTd DataLabel="Lokacija">@context.LocationName</MudTd>
+        <MudTd DataLabel="Prioritet">
+            <PriorityBadge Name="@context.PriorityName" Color="@context.PriorityColor" />
+        </MudTd>
+        <MudTd DataLabel="Status">
+            <StatusBadge Name="@context.StatusName" />
+        </MudTd>
+        <MudTd DataLabel="Izvršitelj">@(context.TechnicianName ?? "—")</MudTd>
+        <MudTd DataLabel="Prijavljeno">@context.ReportedAt.ToLocalTime().ToString("dd.MM.yyyy HH:mm")</MudTd>
+        <MudTd DataLabel="Rok">
+            @if (context.DueDate.HasValue)
+            {
+                <span class="@(context.IsOverdue ? "text-danger fw-bold" : "")">
+                    @context.DueDate.Value.ToLocalTime().ToString("dd.MM.yyyy HH:mm")
+                </span>
+            }
+            else
+            {
+                <span>—</span>
+            }
+        </MudTd>
+    </RowTemplate>
+    <NoRecordsContent>
+        <MudText Typo="Typo.body2" Class="pa-4 mud-text-secondary">Nemate prijava.</MudText>
+    </NoRecordsContent>
+    <PagerContent>
+        <MudTablePager PageSizeOptions="new[] { 10, 25, 50 }" />
+    </PagerContent>
+</MudTable>
+
+@code {
+    private MudTable<FaultReportListDto>? _table;
+    private readonly FaultReportFilterDto _filter = new();
+    private bool _loading;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        if (state.User.Identity?.IsAuthenticated != true)
+            Navigation.NavigateTo("/login");
+    }
+
+    private async Task<TableData<FaultReportListDto>> LoadAsync(TableState state, CancellationToken ct)
+    {
+        _loading = true;
+        _error = null;
+
+        try
+        {
+            _filter.Page = state.Page + 1;
+            _filter.PageSize = state.PageSize;
+            _filter.SortBy = state.SortLabel;
+            _filter.SortDir = state.SortDirection == SortDirection.Ascending ? "asc" : "desc";
+
+            var result = await Api.GetMyFaultReportsAsync(_filter, ct);
+            return new TableData<FaultReportListDto>
+            {
+                Items = result.Items,
+                TotalItems = result.TotalCount
+            };
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+            return new TableData<FaultReportListDto>
+            {
+                Items = [],
+                TotalItems = 0
+            };
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

@@ -1,0 +1,95 @@
+@page "/login"
+@inject ApiClient Api
+@inject JwtAuthStateProvider AuthState
+@inject LookupCache Lookups
+@inject NavigationManager Navigation
+
+<PageTitle>Prijava</PageTitle>
+
+<MudPaper Class="pa-8 mx-auto" Style="max-width: 420px;" Elevation="3">
+    <MudText Typo="Typo.h5" Class="mb-4">e-Kvarovi Županije</MudText>
+    <MudText Typo="Typo.body2" Class="mb-4 mud-text-secondary">Prijavite se u sustav</MudText>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <MudAlert Severity="Severity.Error" Class="mb-4" Dense="true">@_error</MudAlert>
+    }
+
+    <MudForm @ref="_form" Model="_model" @bind-IsValid="_valid">
+        <MudTextField @bind-Value="_model.Email"
+                      Label="E-mail"
+                      InputType="InputType.Email"
+                      Required="true"
+                      RequiredError="E-mail je obavezan."
+                      Class="mb-3"
+                      Immediate="true" />
+        <MudTextField @bind-Value="_model.Password"
+                      Label="Lozinka"
+                      InputType="@(_showPassword ? InputType.Text : InputType.Password)"
+                      Adornment="Adornment.End"
+                      AdornmentIcon="@(_showPassword ? Icons.Material.Filled.VisibilityOff : Icons.Material.Filled.Visibility)"
+                      OnAdornmentClick="TogglePasswordVisibility"
+                      Required="true"
+                      RequiredError="Lozinka je obavezna."
+                      Class="mb-4"
+                      Immediate="true" />
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   FullWidth="true"
+                   Disabled="_busy"
+                   OnClick="HandleLoginAsync">
+            @if (_busy)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Prijavi se
+        </MudButton>
+    </MudForm>
+</MudPaper>
+
+@code {
+    private readonly LoginDto _model = new();
+    private MudForm? _form;
+    private bool _valid;
+    private bool _busy;
+    private bool _showPassword;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        if (state.User.Identity?.IsAuthenticated == true)
+            Navigation.NavigateTo("/");
+    }
+
+    private void TogglePasswordVisibility() => _showPassword = !_showPassword;
+
+    private async Task HandleLoginAsync()
+    {
+        if (_form is null)
+            return;
+
+        await _form.ValidateAsync();
+        if (!_valid)
+            return;
+
+        _error = null;
+        _busy = true;
+
+        try
+        {
+            var response = await Api.LoginAsync(_model);
+            await AuthState.NotifyUserLoginAsync(response.Token);
+            await Lookups.EnsureLoadedAsync();
+            Navigation.NavigateTo("/");
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

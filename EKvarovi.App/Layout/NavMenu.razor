@@ -1,39 +1,52 @@
-﻿<div class="top-row ps-3 navbar navbar-dark">
-    <div class="container-fluid">
-        <a class="navbar-brand" href="">EKvarovi.App</a>
-        <button title="Navigation menu" class="navbar-toggler" @onclick="ToggleNavMenu">
-            <span class="navbar-toggler-icon"></span>
-        </button>
-    </div>
-</div>
+﻿@using EKvarovi.Shared.Enums
 
-<div class="@NavMenuCssClass nav-scrollable" @onclick="ToggleNavMenu">
-    <nav class="nav flex-column">
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
-            </NavLink>
-        </div>
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="counter">
-                <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Counter
-            </NavLink>
-        </div>
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="weather">
-                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Weather
-            </NavLink>
-        </div>
-    </nav>
-</div>
+<MudNavMenu>
+    <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Home">
+        Početna
+    </MudNavLink>
 
-@code {
-    private bool collapseNavMenu = true;
+    <AuthorizeView Roles="@($"{Roles.Admin},{Roles.Manager}")">
+        <MudNavLink Href="/fault-reports" Icon="@Icons.Material.Filled.List">
+            Sve prijave
+        </MudNavLink>
+        <MudNavLink Href="/assignments" Icon="@Icons.Material.Filled.Assignment">
+            Radni nalozi
+        </MudNavLink>
+        <MudNavLink Href="/interventions" Icon="@Icons.Material.Filled.Engineering">
+            Intervencije
+        </MudNavLink>
+    </AuthorizeView>
 
-    private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
+    <AuthorizeView Roles="@Roles.Technician">
+        <MudNavLink Href="/my-assignments" Icon="@Icons.Material.Filled.Build">
+            Moji nalozi
+        </MudNavLink>
+        <MudNavLink Href="/interventions" Icon="@Icons.Material.Filled.Engineering">
+            Intervencije
+        </MudNavLink>
+    </AuthorizeView>
 
-    private void ToggleNavMenu()
-    {
-        collapseNavMenu = !collapseNavMenu;
-    }
-}
+    <AuthorizeView Roles="@($"{Roles.Reporter},{Roles.Manager},{Roles.Admin}")">
+        <MudNavLink Href="/fault-reports/new" Icon="@Icons.Material.Filled.AddCircle">
+            Nova prijava
+        </MudNavLink>
+    </AuthorizeView>
+
+    <MudNavLink Href="/my-reports" Icon="@Icons.Material.Filled.Description">
+        Moje prijave
+    </MudNavLink>
+
+    <MudNavLink Href="/locations" Icon="@Icons.Material.Filled.Place">
+        Lokacije
+    </MudNavLink>
+
+    <MudNavLink Href="/materials" Icon="@Icons.Material.Filled.Inventory">
+        Materijali
+    </MudNavLink>
+
+    <AuthorizeView Roles="@Roles.Admin">
+        <MudNavLink Href="/users" Icon="@Icons.Material.Filled.People">
+            Korisnici
+        </MudNavLink>
+    </AuthorizeView>
+</MudNavMenu>

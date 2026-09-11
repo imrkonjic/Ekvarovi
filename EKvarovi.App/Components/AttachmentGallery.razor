@@ -1,0 +1,71 @@
+@using EKvarovi.Shared.Dtos.Attachments
+@inject IAttachmentMediaService AttachmentMedia
+@implements IAsyncDisposable
+
+<div class="attachment-gallery">
+    @foreach (var item in ImageItems)
+    {
+        if (_blobUrls.TryGetValue(item.Id, out var url))
+        {
+            <figure class="attachment-gallery__item">
+                <div class="attachment-gallery__image-wrap">
+                    <img src="@url" alt="@item.OriginalFileName" loading="lazy" />
+                    @if (CanDeleteItem?.Invoke(item) == true)
+                    {
+                        <MudIconButton Class="attachment-gallery__delete"
+                                       Icon="@Icons.Material.Filled.Delete"
+                                       Size="Size.Small"
+                                       Color="Color.Error"
+                                       aria-label="Obriši"
+                                       OnClick="@(() => OnDelete.InvokeAsync(item.Id))" />
+                    }
+                </div>
+                <figcaption>@item.OriginalFileName</figcaption>
+            </figure>
+        }
+    }
+</div>
+
+@code {
+    [Parameter]
+    public IReadOnlyList<AttachmentDto> Items { get; set; } = [];
+
+    [Parameter]
+    public Func<AttachmentDto, bool>? CanDeleteItem { get; set; }
+
+    [Parameter]
+    public EventCallback<int> OnDelete { get; set; }
+
+    private IEnumerable<AttachmentDto> ImageItems =>
+        Items.Where(i => i.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase));
+
+    private readonly Dictionary<int, string> _blobUrls = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var imageItems = ImageItems.ToList();
+        var currentIds = imageItems.Select(i => i.Id).ToHashSet();
+
+        foreach (var id in _blobUrls.Keys.Where(id => !currentIds.Contains(id)).ToList())
+        {
+            await AttachmentMedia.RevokeBlobUrlAsync(_blobUrls[id]);
+            _blobUrls.Remove(id);
+        }
+
+        foreach (var item in imageItems)
+        {
+            if (_blobUrls.ContainsKey(item.Id))
+                continue;
+
+            var url = await AttachmentMedia.GetBlobUrlAsync(item.DownloadUrl);
+            if (url is not null)
+                _blobUrls[item.Id] = url;
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var url in _blobUrls.Values)
+            await AttachmentMedia.RevokeBlobUrlAsync(url);
+    }
+}

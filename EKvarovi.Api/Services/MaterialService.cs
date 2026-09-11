@@ -32,10 +32,10 @@ public sealed class MaterialService(AppDbContext db) : IMaterialService
 
         if (!string.IsNullOrWhiteSpace(filter.Search))
         {
-            var term = filter.Search.Trim();
+            var term = $"%{filter.Search.Trim()}%";
             query = query.Where(m =>
-                m.Code.Contains(term) ||
-                m.Name.Contains(term));
+                EF.Functions.ILike(m.Code, term) ||
+                EF.Functions.ILike(m.Name, term));
         }
 
         if (filter.MaterialUnitId is int materialUnitId)

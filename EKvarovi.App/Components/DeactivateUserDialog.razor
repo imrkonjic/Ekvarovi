@@ -1,0 +1,139 @@
+@using EKvarovi.Shared.Common
+@using EKvarovi.Shared.Dtos.Assignments
+@inject ApiClient Api
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">Deaktivacija izvršitelja</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudAlert Severity="Severity.Warning" Class="mb-3" Dense="true">
+            @ConflictMessage
+        </MudAlert>
+
+        <MudText Typo="Typo.body2" Class="mb-3">
+            Korisnik <b>@UserDisplayName</b> ima @ActiveAssignments.Count aktivnih naloga.
+            Odaberite zamjenskog izvršitelja prije deaktivacije.
+        </MudText>
+
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3" Dense="true">@_error</MudAlert>
+        }
+
+        <MudTable T="ActiveAssignmentInfoDto"
+                  Items="ActiveAssignments"
+                  Dense="true"
+                  Hover="true"
+                  Breakpoint="Breakpoint.Sm"
+                  Class="mb-4">
+            <HeaderContent>
+                <MudTh>Broj prijave</MudTh>
+                <MudTh>Naslov</MudTh>
+                <MudTh>Prioritet</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Broj prijave">@context.ReportNumber</MudTd>
+                <MudTd DataLabel="Naslov">@context.Title</MudTd>
+                <MudTd DataLabel="Prioritet">@context.PriorityName</MudTd>
+            </RowTemplate>
+        </MudTable>
+
+        <MudSelect T="int?"
+                   @bind-Value="_replacementId"
+                   Label="Zamjenski izvršitelj"
+                   Required="true"
+                   RequiredError="Zamjenski izvršitelj je obavezan."
+                   Clearable="true"
+                   Class="mb-3">
+            @foreach (var tech in _technicians)
+            {
+                <MudSelectItem T="int?" Value="@tech.Id">@tech.Name</MudSelectItem>
+            }
+        </MudSelect>
+
+        <MudTextField @bind-Value="_note"
+                      Label="Napomena (opcionalno)"
+                      Lines="2"
+                      Counter="500"
+                      MaxLength="500" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Odustani</MudButton>
+        <MudButton Color="Color.Error"
+                   Variant="Variant.Filled"
+                   Disabled="_busy || !_replacementId.HasValue"
+                   OnClick="SubmitAsync">
+            @if (_busy)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Prebaci naloge i deaktiviraj
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter, EditorRequired]
+    public int UserId { get; set; }
+
+    [Parameter, EditorRequired]
+    public string UserDisplayName { get; set; } = string.Empty;
+
+    [Parameter, EditorRequired]
+    public IReadOnlyList<ActiveAssignmentInfoDto> ActiveAssignments { get; set; } = [];
+
+    [Parameter]
+    public string ConflictMessage { get; set; } = string.Empty;
+
+    private readonly List<LookupDto> _technicians = [];
+    private int? _replacementId;
+    private string? _note;
+    private bool _busy;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var technicians = await Api.GetTechniciansAsync();
+            _technicians.AddRange(technicians.Where(t => t.Id != UserId));
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (!_replacementId.HasValue)
+            return;
+
+        _busy = true;
+        _error = null;
+
+        try
+        {
+            await Api.TransferUserAssignmentsAsync(UserId, new TransferAssignmentsDto
+            {
+                ReplacementTechnicianId = _replacementId.Value,
+                Note = string.IsNullOrWhiteSpace(_note) ? null : _note.Trim()
+            });
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Close(DialogResult.Cancel());
+}

@@ -1,0 +1,132 @@
+@using EKvarovi.Shared.Dtos.Materials
+@inject ApiClient Api
+@inject LookupCache Lookups
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@(_isEdit ? "Uredi materijal" : "Novi materijal")</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3" Dense="true">@_error</MudAlert>
+        }
+        <MudForm @ref="_form" Model="_model" @bind-IsValid="_valid">
+            <MudTextField @bind-Value="_model.Code"
+                          Label="Šifra"
+                          Required="true"
+                          Counter="20"
+                          MaxLength="20"
+                          Immediate="true"
+                          Class="mb-3" />
+            <MudTextField @bind-Value="_model.Name"
+                          Label="Naziv"
+                          Required="true"
+                          Counter="150"
+                          MaxLength="150"
+                          Immediate="true"
+                          Class="mb-3" />
+            <MudSelect T="int"
+                       @bind-Value="_model.MaterialUnitId"
+                       Label="Mjerna jedinica"
+                       Required="true"
+                       RequiredError="Mjerna jedinica je obavezna."
+                       Class="mb-3">
+                @foreach (var unit in Lookups.MaterialUnits)
+                {
+                    <MudSelectItem T="int" Value="@unit.Id">@unit.Name</MudSelectItem>
+                }
+            </MudSelect>
+            <MudNumericField @bind-Value="_model.UnitPrice"
+                             Label="Jedinična cijena (€)"
+                             Min="0m"
+                             Max="99999999.99m"
+                             Format="N2"
+                             Required="true"
+                             Class="mb-3" />
+            <MudSwitch @bind-Value="_model.IsActive"
+                       Label="Aktivan"
+                       Color="Color.Primary" />
+        </MudForm>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Odustani</MudButton>
+        <MudButton Color="Color.Primary"
+                   Variant="Variant.Filled"
+                   Disabled="_busy"
+                   OnClick="SubmitAsync">
+            @if (_busy)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+            }
+            Spremi
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter]
+    public MaterialListDto? Material { get; set; }
+
+    private readonly MaterialSaveDto _model = new();
+    private MudForm? _form;
+    private bool _valid;
+    private bool _busy;
+    private bool _isEdit;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Lookups.EnsureLoadedAsync();
+
+        if (Material is not null)
+        {
+            _isEdit = true;
+            _model.Code = Material.Code;
+            _model.Name = Material.Name;
+            _model.MaterialUnitId = Material.MaterialUnitId;
+            _model.UnitPrice = Material.UnitPrice;
+            _model.IsActive = Material.IsActive;
+        }
+        else if (Lookups.MaterialUnits.Count > 0)
+        {
+            _model.MaterialUnitId = Lookups.MaterialUnits[0].Id;
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (_form is null)
+            return;
+
+        await _form.ValidateAsync();
+        if (!_valid)
+            return;
+
+        _busy = true;
+        _error = null;
+
+        try
+        {
+            if (_isEdit && Material is not null)
+                await Api.UpdateMaterialAsync(Material.Id, _model);
+            else
+                await Api.CreateMaterialAsync(_model);
+
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void Cancel() => MudDialog.Close(DialogResult.Cancel());
+}

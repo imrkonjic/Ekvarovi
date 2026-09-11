@@ -32,14 +32,14 @@ public sealed class LocationService(AppDbContext db) : ILocationService
 
         if (!string.IsNullOrWhiteSpace(filter.Search))
         {
-            var term = filter.Search.Trim();
+            var term = $"%{filter.Search.Trim()}%";
             query = query.Where(l =>
-                l.Code.Contains(term) ||
-                l.Name.Contains(term) ||
-                l.Address.Contains(term) ||
-                l.City.Contains(term) ||
-                (l.ContactPerson != null && l.ContactPerson.Contains(term)) ||
-                (l.ContactPhone != null && l.ContactPhone.Contains(term)));
+                EF.Functions.ILike(l.Code, term) ||
+                EF.Functions.ILike(l.Name, term) ||
+                EF.Functions.ILike(l.Address, term) ||
+                EF.Functions.ILike(l.City, term) ||
+                (l.ContactPerson != null && EF.Functions.ILike(l.ContactPerson, term)) ||
+                (l.ContactPhone != null && EF.Functions.ILike(l.ContactPhone, term)));
         }
 
         if (filter.LocationTypeId is int locationTypeId)

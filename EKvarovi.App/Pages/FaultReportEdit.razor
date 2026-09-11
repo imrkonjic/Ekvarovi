@@ -1,0 +1,296 @@
+@page "/fault-reports/{Id:int}/edit"
+@using EKvarovi.Shared.Dtos.FaultReports
+@using EKvarovi.Shared.Dtos.Locations
+@using EKvarovi.Shared.Enums
+@inject ApiClient Api
+@inject LookupCache Lookups
+@inject JwtAuthStateProvider AuthState
+@inject NavigationManager Navigation
+
+<PageTitle>Uređivanje prijave</PageTitle>
+
+<MudGrid Justify="Justify.Center">
+    <MudItem xs="12" sm="10" md="8" lg="6">
+        @if (_report is not null)
+        {
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
+                <MudText Typo="Typo.h4">@_report.ReportNumber</MudText>
+                <StatusBadge Name="@_report.StatusName" StatusId="@_report.FaultStatusId" />
+            </MudStack>
+        }
+        else
+        {
+            <MudText Typo="Typo.h4" Class="mb-4">Uređivanje prijave</MudText>
+        }
+
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-4" Dense="true">@_error</MudAlert>
+        }
+
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" Class="mb-4" />
+        }
+        else if (_canEdit)
+        {
+            <MudPaper Class="pa-6" Elevation="2">
+                <MudForm @ref="_form" Model="_model" @bind-IsValid="_valid">
+                    <MudTextField @bind-Value="_model.Title"
+                                  Label="Naslov"
+                                  Required="true"
+                                  Counter="200"
+                                  MaxLength="200"
+                                  Immediate="true"
+                                  Validation="@(new Func<string, IEnumerable<string>>(ValidateTitle))"
+                                  Class="mb-4" />
+                    <MudTextField @bind-Value="_model.Description"
+                                  Label="Opis"
+                                  Required="true"
+                                  Lines="5"
+                                  Counter="2000"
+                                  MaxLength="2000"
+                                  Immediate="true"
+                                  Validation="@(new Func<string, IEnumerable<string>>(ValidateDescription))"
+                                  Class="mb-4" />
+                    <MudSelect T="int"
+                               @bind-Value="_model.LocationId"
+                               Label="Lokacija"
+                               Required="true"
+                               RequiredError="Lokacija je obavezna."
+                               Class="mb-4">
+                        @foreach (var loc in _locations)
+                        {
+                            <MudSelectItem T="int" Value="@loc.Id">@loc.Name (@loc.Code)</MudSelectItem>
+                        }
+                    </MudSelect>
+
+                    @if (_showTriage)
+                    {
+                        <MudDivider Class="my-4" />
+                        <MudText Typo="Typo.subtitle1" Class="mb-3">Kategorizacija</MudText>
+
+                        <MudSelect T="int?"
+                                   @bind-Value="_faultTypeId"
+                                   Label="Vrsta kvara"
+                                   Required="true"
+                                   RequiredError="Vrsta je obavezna."
+                                   Class="mb-4">
+                            @foreach (var type in Lookups.FaultTypes)
+                            {
+                                <MudSelectItem T="int?" Value="@type.Id">@type.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+
+                        <MudSelect T="int?"
+                                   @bind-Value="_faultPriorityId"
+                                   @bind-Value:after="SuggestDueDate"
+                                   Label="Prioritet"
+                                   Required="true"
+                                   RequiredError="Prioritet je obavezan."
+                                   Class="mb-4">
+                            @foreach (var prio in Lookups.Priorities)
+                            {
+                                <MudSelectItem T="int?" Value="@prio.Id">@prio.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+
+                        <MudDatePicker @bind-Date="_dueDate"
+                                       Label="Rok"
+                                       Required="_faultPriorityId == FaultPriorityIds.Kritican"
+                                       RequiredError="Kritičan prioritet zahtijeva rok."
+                                       Class="mb-4" />
+                    }
+
+                    <MudStack Row="true" Spacing="2" Justify="Justify.FlexEnd">
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="Color.Default"
+                                   Disabled="_busy"
+                                   OnClick="Cancel">
+                            Odustani
+                        </MudButton>
+                        <MudButton Variant="Variant.Filled"
+                                   Color="Color.Primary"
+                                   Disabled="_busy"
+                                   OnClick="SubmitAsync">
+                            @if (_busy)
+                            {
+                                <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                            }
+                            Spremi
+                        </MudButton>
+                    </MudStack>
+                </MudForm>
+            </MudPaper>
+        }
+    </MudItem>
+</MudGrid>
+
+@code {
+    [Parameter]
+    public int Id { get; set; }
+
+    private readonly FaultReportUpdateDto _model = new();
+    private readonly List<LocationListDto> _locations = [];
+    private FaultReportDetailDto? _report;
+    private MudForm? _form;
+    private bool _valid;
+    private bool _busy;
+    private bool _loading = true;
+    private bool _canEdit;
+    private bool _showTriage;
+    private int? _faultTypeId;
+    private int? _faultPriorityId;
+    private DateTime? _dueDate;
+    private int _currentUserId;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        if (state.User.Identity?.IsAuthenticated != true)
+        {
+            Navigation.NavigateTo("/login");
+            return;
+        }
+
+        _showTriage = state.User.IsInRole(Roles.Admin) || state.User.IsInRole(Roles.Manager);
+        _ = int.TryParse(state.User.FindFirst("sub")?.Value, out _currentUserId);
+
+        try
+        {
+            await Lookups.EnsureLoadedAsync();
+            _report = await Api.GetFaultReportAsync(Id);
+
+            if (_report.FaultStatusId == FaultStatusIds.Zatvoreno)
+            {
+                _error = "Zatvorena prijava se ne može mijenjati.";
+                return;
+            }
+
+            var isOwnerInZaprimljeno = _report.ReportedByUserId == _currentUserId
+                                       && _report.FaultStatusId == FaultStatusIds.Zaprimljeno;
+            _canEdit = _showTriage || isOwnerInZaprimljeno;
+
+            if (!_canEdit)
+            {
+                _error = "Nemate ovlasti za izmjenu ove prijave.";
+                return;
+            }
+
+            _model.Title = _report.Title;
+            _model.Description = _report.Description;
+            _model.LocationId = _report.LocationId;
+            _faultTypeId = _report.FaultTypeId;
+            _faultPriorityId = _report.FaultPriorityId;
+            _dueDate = _report.DueDate?.ToLocalTime();
+
+            var locations = await Api.GetLocationsAsync(new LocationFilterDto
+            {
+                Page = 1,
+                PageSize = 100,
+                IsActive = true,
+                SortBy = "name",
+                SortDir = "asc"
+            });
+            _locations.AddRange(locations.Items);
+
+            if (!_locations.Any(l => l.Id == _model.LocationId) && _report.LocationId > 0)
+            {
+                _locations.Insert(0, new LocationListDto
+                {
+                    Id = _report.LocationId,
+                    Name = _report.LocationName,
+                    Code = string.Empty
+                });
+            }
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static IEnumerable<string> ValidateTitle(string title)
+    {
+        var trimmed = title?.Trim() ?? string.Empty;
+        if (trimmed.Length == 0)
+            yield return "Naslov je obavezan.";
+        else if (trimmed.Length < 5)
+            yield return "Naslov mora imati najmanje 5 znakova.";
+    }
+
+    private static IEnumerable<string> ValidateDescription(string description)
+    {
+        var trimmed = description?.Trim() ?? string.Empty;
+        if (trimmed.Length == 0)
+            yield return "Opis je obavezan.";
+        else if (trimmed.Length < 10)
+            yield return "Opis mora imati najmanje 10 znakova.";
+    }
+
+    private void SuggestDueDate()
+    {
+        var priority = Lookups.Priorities.FirstOrDefault(p => p.Id == _faultPriorityId);
+        if (priority is not null)
+            _dueDate = DateTime.Now.AddHours(priority.DefaultResolutionHours);
+    }
+
+    private void Cancel() => Navigation.NavigateTo($"/fault-reports/{Id}");
+
+    private async Task SubmitAsync()
+    {
+        if (_form is null)
+            return;
+
+        await _form.ValidateAsync();
+        if (!_valid || _model.LocationId <= 0)
+            return;
+
+        if (_showTriage && (!_faultTypeId.HasValue || !_faultPriorityId.HasValue))
+        {
+            _error = "Vrsta i prioritet su obavezni.";
+            return;
+        }
+
+        if (_showTriage
+            && _faultPriorityId == FaultPriorityIds.Kritican
+            && !_dueDate.HasValue)
+        {
+            _error = "Kritičan prioritet zahtijeva rok.";
+            return;
+        }
+
+        _error = null;
+        _busy = true;
+
+        try
+        {
+            await Api.UpdateFaultReportAsync(Id, _model);
+
+            if (_showTriage)
+            {
+                await Api.TriageFaultReportAsync(Id, new FaultReportTriageDto
+                {
+                    FaultTypeId = _faultTypeId!.Value,
+                    FaultPriorityId = _faultPriorityId!.Value,
+                    DueDate = _dueDate
+                });
+            }
+
+            Navigation.NavigateTo($"/fault-reports/{Id}");
+        }
+        catch (ApiClientException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

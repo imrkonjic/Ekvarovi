@@ -1,0 +1,26 @@
+@if (string.IsNullOrWhiteSpace(Name))
+{
+    <MudText Typo="Typo.body2" Class="text-muted">—</MudText>
+}
+else
+{
+    <MudChip T="string"
+             Size="Size.Small"
+             Style="@ChipStyle"
+             Class="priority-badge">
+        @Name
+    </MudChip>
+}
+
+@code {
+    [Parameter]
+    public string? Name { get; set; }
+
+    [Parameter]
+    public string? Color { get; set; }
+
+    private string ChipStyle =>
+        string.IsNullOrWhiteSpace(Color)
+            ? string.Empty
+            : $"background-color: {Color}; color: white;";
+}

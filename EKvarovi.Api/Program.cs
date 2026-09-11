@@ -7,7 +7,9 @@ using EKvarovi.Api.Infrastructure;
 using EKvarovi.Api.Infrastructure.Options;
 using EKvarovi.Api.Services;
 using EKvarovi.Api.Services.Abstractions;
+using EKvarovi.Api.Services.Storage;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
@@ -18,6 +20,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.SectionName));
 builder.Services.Configure<FileStorageOptions>(builder.Configuration.GetSection(FileStorageOptions.SectionName));
+builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = 10 * 1024 * 1024);
 
 builder.Services.AddDbContext<AppDbContext>(opt => opt
     .UseNpgsql(builder.Configuration.GetConnectionString("Default"))
@@ -32,9 +35,21 @@ builder.Services.AddScoped<ILookupService, LookupService>();
 builder.Services.AddScoped<ILocationService, LocationService>();
 builder.Services.AddScoped<IMaterialService, MaterialService>();
 builder.Services.AddScoped<IUserService, UserService>();
+builder.Services.AddScoped<IFaultReportService, FaultReportService>();
+builder.Services.AddScoped<IWorkAssignmentService, WorkAssignmentService>();
+builder.Services.AddScoped<IInterventionService, InterventionService>();
+builder.Services.AddScoped<IInterventionMaterialService, InterventionMaterialService>();
+builder.Services.AddSingleton<IFileStorage, LocalDiskFileStorage>();
+builder.Services.AddScoped<IAttachmentService, AttachmentService>();
+builder.Services.AddScoped<IDashboardService, DashboardService>();
 
 var jwt = builder.Configuration.GetSection("Jwt");
-var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt["Key"]!));
+var jwtKey = jwt["Key"];
+if (string.IsNullOrWhiteSpace(jwtKey) || Encoding.UTF8.GetByteCount(jwtKey) < 32)
+    throw new InvalidOperationException(
+        "Jwt:Key mora biti postavljen i imati najmanje 32 bajta (user-secrets ili env).");
+
+var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -52,8 +67,35 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             NameClaimType = JwtRegisteredClaimNames.Sub,
             RoleClaimType = ClaimTypes.Role
         };
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = async context =>
+            {
+                var sub = context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Sub);
+                if (!int.TryParse(sub, out var userId))
+                {
+                    context.Fail("Neispravan token.");
+                    return;
+                }
+
+                var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
+                var isActive = await db.Users
+                    .AsNoTracking()
+                    .Where(u => u.Id == userId)
+                    .Select(u => u.IsActive)
+                    .FirstOrDefaultAsync(context.HttpContext.RequestAborted);
+
+                if (!isActive)
+                    context.Fail("Korisnički račun nije aktivan.");
+            }
+        };
     });
 builder.Services.AddAuthorization();
+
+builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
+    .WithOrigins(builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()!)
+    .AllowAnyHeader()
+    .AllowAnyMethod()));
 
 builder.Services.AddControllers();
 builder.Services.AddSwaggerGen(c =>
@@ -78,40 +120,20 @@ var app = builder.Build();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseSwagger();
 app.UseSwaggerUI();
+app.UseCors();
 
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+    app.UseHttpsRedirection();
+
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
-
-app.MapGet("/weatherforecast", () =>
-{
-    var forecast =  Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-})
-.WithName("GetWeatherForecast");
-
 await using (var scope = app.Services.CreateAsyncScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await db.Database.MigrateAsync();
     await DemoDataSeeder.SeedAsync(db, app.Configuration);
 }
 
 app.Run();
-
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
