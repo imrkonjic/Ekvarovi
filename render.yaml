@@ -1,0 +1,56 @@
+# Render Blueprint — e-Kvarovi
+# Dashboard: New > Blueprint > Connect repo > Apply
+# Napomena: persistent disk zahtijeva Starter plan na API servisu.
+
+databases:
+  - name: ekvarovi-db
+    databaseName: ekvarovi
+    user: ekvarovi
+    plan: free
+
+services:
+  - type: web
+    name: ekvarovi-api
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./EKvarovi.Api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    disk:
+      name: ekvarovi-uploads
+      mountPath: /data/uploads
+      sizeGB: 1
+    envVars:
+      - key: ASPNETCORE_URLS
+        value: http://+:10000
+      - key: ConnectionStrings__Default
+        fromDatabase:
+          name: ekvarovi-db
+          property: connectionString
+      - key: Jwt__Key
+        generateValue: true
+      - key: FileStorage__RootPath
+        value: /data/uploads
+      - key: Cors__AllowedOrigins__0
+        fromService:
+          name: ekvarovi-app
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: Seed__DemoData
+        value: "true"
+
+  - type: web
+    name: ekvarovi-app
+    runtime: static
+    buildCommand: chmod +x ./scripts/render-build-app.sh && ./scripts/render-build-app.sh
+    staticPublishPath: ./out/wwwroot
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: RENDER_API_URL
+        fromService:
+          name: ekvarovi-api
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL

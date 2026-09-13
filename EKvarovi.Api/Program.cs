@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
+using Npgsql;
 
 JwtSecurityTokenHandler.DefaultMapInboundClaims = false;
 
@@ -22,8 +23,18 @@ builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptio
 builder.Services.Configure<FileStorageOptions>(builder.Configuration.GetSection(FileStorageOptions.SectionName));
 builder.Services.Configure<FormOptions>(o => o.MultipartBodyLengthLimit = 10 * 1024 * 1024);
 
+var connectionString = builder.Configuration.GetConnectionString("Default")!;
+if (connectionString.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase))
+{
+    var csb = new NpgsqlConnectionStringBuilder(connectionString)
+    {
+        SslMode = SslMode.Require
+    };
+    connectionString = csb.ConnectionString;
+}
+
 builder.Services.AddDbContext<AppDbContext>(opt => opt
-    .UseNpgsql(builder.Configuration.GetConnectionString("Default"))
+    .UseNpgsql(connectionString)
     .UseSnakeCaseNamingConvention());
 
 builder.Services.AddHttpContextAccessor();
@@ -98,6 +109,7 @@ builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
     .AllowAnyMethod()));
 
 builder.Services.AddControllers();
+builder.Services.AddHealthChecks();
 builder.Services.AddSwaggerGen(c =>
 {
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
@@ -127,6 +139,7 @@ if (!app.Environment.IsDevelopment())
 
 app.UseAuthentication();
 app.UseAuthorization();
+app.MapHealthChecks("/health");
 app.MapControllers();
 
 await using (var scope = app.Services.CreateAsyncScope())
